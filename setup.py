@@ -5,4 +5,5 @@ setup(name='hocr',
       description='hOCR (streaming) parsers and writers',
       author='Merlijn Boris Wolf Wajer',
       author_email='merlijn@archive.org',
-      packages=['hocr'])
+      packages=['hocr'],
+      scripts=['bin/hocr-combine-stream'])
