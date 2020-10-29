@@ -47,11 +47,35 @@ def hocr_page_iterator(file_path):
 
             elem.clear()
 
-# TODO: Check if the one in archive-pdf-tools pdfrenderer.py is more up to date
+
 # XXX: Maybe get rid of scaler here, and just move the normalisation of the
 # x_fsize to pdfrenderer.py
 def hocr_page_to_word_data(hocr_page, scaler=1):
     """
+    Parses a single hocr_page into word data.
+
+    Args:
+    * hocr_page: a single hocr_page as returned by hocr_page_iterator
+    * (optional) scaler: a scalar to scale font sizes by
+
+    Returns:
+    A list of paragraph, each paragraph containing a list of lines, and each
+    line containing a list of words, plus properties.
+
+    Paragraphs have the following attributes:
+    * 'lines': the lines that form this paragraph
+
+    Lines have the following attributes:
+    * 'words': the words that form this line
+    * 'bbox': bounding box (tuple of 4 floats)
+    * 'baseline': baseline of the word (tuple of 2 floats)
+
+    Words have the following attributes:
+    * 'text': word text, str
+    * 'bbox': bounding box (tuple of 4 floats)
+    * 'fontsize': fontsize as a float, or 0.
+    * 'writing_direction': See WRITING_DIRECTION_* constants
+    * 'confidence': word confidence, 0 - 100
     """
     paragraphs = []
 
@@ -95,7 +119,7 @@ def hocr_page_to_word_data(hocr_page, scaler=1):
                     x_fsize = float(f_sizeraw.group(1))
                     x_fsize *= scaler
                 else:
-                    x_fsize = 0. # Will get fixed later on
+                    x_fsize = 0. # Will get fixed later on, in pdfrenderer at least
 
                 writing_direction = WRITING_DIRECTION_UNSPECIFIED
                 if 'dir' in word.attrib:
@@ -115,3 +139,19 @@ def hocr_page_to_word_data(hocr_page, scaler=1):
         paragraphs.append(paragraph_data)
 
     return paragraphs
+
+
+def hocr_page_get_dimensions(hocr_page):
+    """
+    Returns the dimensions (width, height) of a hocr page as returned by
+    hocr_page_iterator.
+
+    Args:
+    * hocr_page: a page as returned by hocr_page
+
+    Returns:
+    (width, height): tuple of (int, int)
+    """
+    pagebox = BBOX_REGEX.search(hocr_page.attrib['title']).group(1).split()
+    width, height = int(pagebox[2]), int(pagebox[3])
+    return width, height
