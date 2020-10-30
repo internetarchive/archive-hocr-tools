@@ -25,6 +25,8 @@ def get_header_footer(first_file):
             s = s.decode('utf-8')
             break
 
+        elem.clear()
+
     comp = s.split('<body>')
 
     # XML-ho
