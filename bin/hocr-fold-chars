@@ -1,0 +1,96 @@
+#!/usr/bin/python3
+
+import sys
+import argparse
+from glob import glob
+
+from lxml import etree
+
+from hocr.parse import hocr_page_iterator
+
+
+def get_header_footer(first_file):
+    s = ''
+    doc = etree.iterparse(first_file)
+    for act, elem in doc:
+        if elem.tag[-4:] == 'html':
+            print('found tag')
+            children = elem.getchildren()
+            for child in children:
+                if child.tag[-4:] == 'body':
+                    chs = child.getchildren()
+                    for c in chs:
+                        child.remove(c)
+            s = etree.tostring(elem, pretty_print=True, method='xml',
+                               encoding='UTF-8', xml_declaration=True)
+            s = s.decode('utf-8')
+            break
+
+        elem.clear()
+
+    comp = s.split('<body>')
+
+    # XML-ho
+    header = comp[0] + '<body>' + '\n'
+    htmlidx = header.find('<html')
+    doctype = '''<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+    "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">'''
+    header = header[:htmlidx] + doctype + '\n' + header[htmlidx:]
+
+    footer = comp[1].lstrip()
+
+    return header.encode('utf-8'), footer.encode('utf-8')
+
+
+def process_files(infile):
+    top, bottom = get_header_footer(infile)
+
+    sys.stdout.buffer.write(top)
+
+    page_no = 0
+
+    for page in hocr_page_iterator(infile):
+        blocks = page.xpath("*[@class='ocr_carea']")
+        for block in blocks:
+            paragraphs = block.xpath("*[@class='ocr_par']")
+            for par in paragraphs:
+                for line in par.getchildren():
+                    words = line.xpath("*[@class='ocrx_word']")
+                    for word in words:
+                        chars = word.xpath("*[@class='ocrx_cinfo']")
+                        txt = ''
+                        for char in chars:
+                            txt += char.text
+
+                        ch = word.getchildren()
+                        for c in ch:
+                            word.remove(c)
+                        word.text = txt
+
+        s = etree.tostring(page, pretty_print=True, method='xml',
+                           encoding='utf-8').decode('utf-8')
+        # Let's Remove the xmlns in the div.
+        # Yes, this is horrible, but cleanup_namespaces doesn't help
+        # since as far as tostring knows, this is the root.
+        # Let's also add two spaces for indendation for the first
+        # page, and one for all the other pages.
+        if page_no == 1:
+            s = '  ' + \
+                s.replace(' xmlns="http://www.w3.org/1999/xhtml"', '')
+        else:
+            s = ' ' + \
+                s.replace(' xmlns="http://www.w3.org/1999/xhtml"', '')
+
+        s = s.encode('utf-8')
+        sys.stdout.buffer.write(s)
+
+    sys.stdout.buffer.write(bottom)
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description='Fold character-based hOCR '
+                                                 'into word-based hOCR')
+    parser.add_argument('-f', '--infile', help='Input file',
+                        type=str, default=None)
+    args = parser.parse_args()
+
+    process_files(args.infile)
