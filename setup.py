@@ -6,4 +6,4 @@ setup(name='hocr',
       author='Merlijn Boris Wolf Wajer',
       author_email='merlijn@archive.org',
       packages=['hocr'],
-      scripts=['bin/hocr-combine-stream'])
+      scripts=['bin/hocr-combine-stream', 'bin/hocr-fold-chars'])
