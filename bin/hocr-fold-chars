@@ -13,7 +13,6 @@ def get_header_footer(first_file):
     doc = etree.iterparse(first_file)
     for act, elem in doc:
         if elem.tag[-4:] == 'html':
-            print('found tag')
             children = elem.getchildren()
             for child in children:
                 if child.tag[-4:] == 'body':
