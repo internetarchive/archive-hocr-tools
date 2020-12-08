@@ -11,7 +11,7 @@ from hocr.parse import hocr_page_iterator
 
 def get_header_footer(first_file):
     s = ''
-    doc = etree.iterparse(first_file)
+    doc = etree.iterparse(first_file, events=('start',))
     for act, elem in doc:
         if elem.tag[-4:] == 'html':
             children = elem.getchildren()
