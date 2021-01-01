@@ -48,22 +48,17 @@ def process_files(infile):
     page_no = 0
 
     for page in hocr_page_iterator(infile):
-        blocks = page.xpath("*[@class='ocr_carea']")
-        for block in blocks:
-            paragraphs = block.xpath("*[@class='ocr_par']")
-            for par in paragraphs:
-                for line in par.getchildren():
-                    words = line.xpath("*[@class='ocrx_word']")
-                    for word in words:
-                        chars = word.xpath("*[@class='ocrx_cinfo']")
-                        txt = ''
-                        for char in chars:
-                            txt += char.text
+        words = page.xpath(".//*[@class='ocrx_word']")
+        for word in words:
+            chars = word.xpath("*[@class='ocrx_cinfo']")
+            txt = ''
+            for char in chars:
+                txt += char.text
 
-                        ch = word.getchildren()
-                        for c in ch:
-                            word.remove(c)
-                        word.text = txt
+            ch = word.getchildren()
+            for c in ch:
+                word.remove(c)
+            word.text = txt
 
         s = etree.tostring(page, pretty_print=True, method='xml',
                            encoding='utf-8').decode('utf-8')
