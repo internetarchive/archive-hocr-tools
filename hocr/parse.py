@@ -104,10 +104,14 @@ def hocr_page_to_word_data(hocr_page, scaler=1):
 
             word_data = []
             for word in line.xpath('.//*[@class="ocrx_word"]'):
-                # XXX: if no ocrx_cinfo, then just read word.text
                 rawtext = ''
+                wordbased = True
                 for char in word.xpath('.//*[@class="ocrx_cinfo"]'):
                     rawtext += char.text
+                    wordbased = False
+
+                if wordbased:
+                    rawtext = word.text
 
                 box = BBOX_REGEX.search(word.attrib['title']).group(1).split()
                 box = [float(i) for i in box]
