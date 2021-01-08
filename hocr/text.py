@@ -4,93 +4,9 @@ from .util import open_if_required
 from .parse import hocr_page_to_word_data, hocr_page_to_word_data_fast, \
         hocr_page_iterator, hocr_page_get_dimensions
 
+# TODO: Go for line conf
 MIN_WORD_CONF = 75
 
-
-def hocr_page_text(page):
-    """
-    Extract text from a hOCR XML page element.
-
-    Args:
-
-    * page: hOCR XML page element
-
-    Returns: page contents (`str`)
-    """
-    text = ''
-    word_data = hocr_page_to_word_data(page)
-
-    for paragraph in word_data:
-        block_data = False
-        for line in paragraph['lines']:
-            line_words = ''
-            for word in line['words']:
-                if word['confidence'] < MIN_WORD_CONF:
-                    continue
-                line_words += word['text'] + ' '
-                block_data = True
-
-            # Encode
-            line_words = line_words.strip().encode('utf-8')
-
-            # Write out
-            if line_words:
-                text += ' '+line_words.decode('utf-8')
-
-        if block_data:
-            text += '\n'	
-
-    return text
-
-
-def hocr_paragraphs(hocr_iter):
-    """
-    Takes a hocr page iterator (from hocr.parse.hocr_page_iterator) and emits
-    paragraphs from the page exactly as they are found in the FTS document. This
-    requires parsing and interpreting the text up front, potentially merging
-    paragraphs into a single one.
-
-    Function also returns the reconstructed hocr text that should match the FTS
-    paragraph text.
-
-    Function also keeps track of the page number, width and heights for usage
-    later on in the code.
-
-    Args:
-
-    * hocr_iter: iterator as returned by hocr_page_iterator
-    """
-    text = ''
-    ps = []
-
-    page_no = 0
-    for hocr_page in hocr_iter:
-        page_width, page_height = hocr_page_get_dimensions(hocr_page)
-
-        #paragraphs = hocr_page_to_word_data(hocr_page)  # XXX
-        paragraphs = hocr_page_to_word_data_fast(hocr_page)
-        for paragraph in paragraphs:
-            ptext, ok = hocr_paragraph_text(paragraph)
-            if not ok:
-                text += ptext
-                ps.append(paragraph)
-                continue
-
-            if len(ps):
-                # Create unified paragraph data from multiple hocr paragraphs
-                ps.append(paragraph)
-                new_paragraph = {}
-                new_paragraph['lines'] = []
-                for p in ps:
-                    new_paragraph['lines'].extend(p['lines'])
-
-                paragraph = new_paragraph
-
-            yield (paragraph, ptext, page_no, page_width, page_height)
-            text = ''
-            ps = []
-
-        page_no += 1
 
 
 def hocr_paragraph_text(paragraph):
@@ -109,19 +25,52 @@ def hocr_paragraph_text(paragraph):
     * Tuple of (`str`, `bool`), where the `str` is the paragraph data, and the
       boolean if this text continues is to be merged with the next paragraph.
     """
-    data = ''
-    block_data = False
+    par_text = ''
+
     for line in paragraph['lines']:
         line_words = ''
         for word in line['words']:
             if word['confidence'] < MIN_WORD_CONF:
                 continue
             line_words += word['text'] + ' '
-            block_data = True
 
-        data += line_words
+        # Encode
+        line_words = line_words.encode('utf-8')
+        #line_words = line_words.strip().encode('utf-8')
 
-    return data, block_data
+        # Write out
+        if line_words:
+            par_text += line_words.decode('utf-8')
+
+    if par_text:
+        # Strip last space
+        par_text = par_text[:-1]
+
+    return par_text
+
+
+def hocr_page_text(page):
+    """
+    Extract text from a hOCR XML page element.
+
+    Args:
+
+    * page: hOCR XML page element
+
+    Returns: page contents (`str`)
+    """
+    text = ''
+    word_data = hocr_page_to_word_data_fast(page)
+
+    for paragraph in word_data:
+        par_text = hocr_paragraph_text(paragraph)
+
+        # Newline is something we add, it is not part of the paragraph text
+        par_text += '\n'
+
+        text += par_text
+
+    return text
 
 
 def get_hocr_words(paragraph):

@@ -1,0 +1,42 @@
+#!/usr/bin/env python
+
+import sys
+import argparse
+
+def process_file(textfile, pattern):
+    fp = open(textfile)
+    pattern = pattern.lower()
+
+    for line in fp:
+        linematch = line.lower()
+        if pattern in linematch:
+            start = 0
+            while True:
+                index = linematch.find(pattern, start)
+
+                if index == -1:
+                    break
+
+                sys.stdout.write(line[start:index])
+                sys.stdout.write('{{{')
+                sys.stdout.write(line[index:index+len(pattern)])
+                sys.stdout.write('}}}')
+
+                start = index + len(pattern)
+
+            sys.stdout.write(line[start:])
+        else:
+            sys.stdout.write(line)
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description='Mimic ES highlighting on '
+                                                  'plaintext document')
+    parser.add_argument('-f', '--infile', help='Filename to read',
+                        type=str, default=None)
+    parser.add_argument('-p', '--pattern', help='Pattern to search for',
+                        type=str, default=None)
+    args = parser.parse_args()
+
+    process_file(args.infile, args.pattern)
+

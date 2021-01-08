@@ -1,0 +1,32 @@
+#!/usr/bin/env python
+
+import sys
+import argparse
+
+from hocr.parse import hocr_page_iterator, hocr_page_to_word_data_fast
+from hocr.text import hocr_paragraph_text
+
+
+def process_file(hocrfile):
+    page_count = 0
+
+    for page in hocr_page_iterator(hocrfile):
+        wd = hocr_page_to_word_data_fast(page)
+
+        for paragraph in wd:
+            text = hocr_paragraph_text(paragraph)
+            sys.stdout.write(text)
+            sys.stdout.write('\n')
+
+        page_count += 1
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description='hOCR to plaintext via '
+                                                 'paragraphs')
+    parser.add_argument('-f', '--infile', help='Filename to read',
+                        type=str, default=None)
+    args = parser.parse_args()
+
+    process_file(args.infile)
+

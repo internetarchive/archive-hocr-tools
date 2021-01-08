@@ -2,9 +2,11 @@ import json
 
 from lxml import etree
 
+from .util import open_if_required
 from .parse import hocr_page_iterator
 from .text import hocr_get_xml_page_offsets, hocr_get_plaintext_page_offsets, \
         hocr_page_text
+
 
 def hocr_get_page_lookup_table(fd_or_path):
     """
@@ -34,6 +36,45 @@ def hocr_get_page_lookup_table(fd_or_path):
 
     return res
 
+def hocr_lookup_by_plaintext_offset(page_lookup_data, pos_bytes_plain):
+    """
+    Get the lookup index and data for a page that corresponds to the plaintext
+    offset as
+    specified in pos_bytes_plain.
+
+    Args:
+
+    * page_lookup_data: Lookup table as returned by hocr_load_lookup_table or
+      hocr_get_page_lookup_table.
+    * pos_bytes_plain: Offset in plaintext of the hOCR file.
+    """
+    for idx, dat in enumerate(page_lookup_data):
+        tstart, tend = dat[0:2]
+        xstart, xend = dat[2:4]
+
+        if tstart <= pos_bytes_plain < tend:
+            return idx, dat
+
+    return None, None
+
+
+def hocr_lookup_page_by_dat(fp, dat):
+    """
+    Get the XML for a specific hOCR page that corresponds to the lookup
+    data `dat`.
+
+    Args:
+
+    * fp: file pointer to hOCR file
+    * `dat`: lookup table entry for the page
+    """
+    xstart, xend = dat[2:4]
+
+    fp.seek(xstart)
+    xml = fp.read(xend-xstart)
+    root = etree.fromstring(xml)
+    return root
+
 
 def hocr_lookup_page_by_plaintext_offset(fp, page_lookup_data, pos_bytes_plain):
     """
@@ -42,22 +83,13 @@ def hocr_lookup_page_by_plaintext_offset(fp, page_lookup_data, pos_bytes_plain):
 
     Args:
 
-    * fp
+    * fp: file pointer to hOCR file
     * page_lookup_data: Lookup table as returned by hocr_load_lookup_table or
       hocr_get_page_lookup_table.
     * pos_bytes_plain: Offset in plaintext of the hOCR file.
     """
-    for dat in page_lookup_data:
-        tstart, tend = dat[0:2]
-        xstart, xend = dat[2:4]
-
-        if tstart <= pos_bytes_plain <= tend:
-            fp.seek(xstart)
-            xml = fp.read(xend-xstart)
-            root = etree.fromstring(xml)
-            return root
-
-    return None
+    _, dat = hocr_lookup_by_plaintext_offset(page_lookup_data, pos_bytes_plain)
+    return hocr_lookup_page_by_dat(fp, dat)
 
 
 def hocr_load_lookup_table(path):
@@ -66,30 +98,38 @@ def hocr_load_lookup_table(path):
 
     Args:
 
-    * path: Path to JSON 
+    * fd_or_path: File to load from
     
     Returns:
 
     * Lookup table
     """
-    return json.load(open(path, 'r'))
+    fp = open_if_required(path)
+    return json.load(fp)
 
 
-
-def hocr_save_lookup_table(lookup_table, path):
+def hocr_save_lookup_table(lookup_table, fd_or_path):
     """
     Save lookup table to JSON.
 
     Args:
 
     * lookup_table: Lookup table as returned by hocr_get_page_lookup_table
-    * path: Path to save to
+    * fd_or_path: File to save to
     """
-    json.dump(lookup_table, open(path, 'w+'))
+    if isinstance(fd_or_path, str):
+        fd_or_path = open(fd_or_path, 'w+')
+    json.dump(lookup_table, fd_or_path)
 
 
 def hocr_get_fts_text(fd_or_path):
     """
+    Return text that can be ingested in a full text search engine like SOLR or
+    Elastic.
+
+    Args:
+
+    * fd_or_path: File descriptor or path to hOCR file
     """
     for page in hocr_page_iterator(fd_or_path):
         yield hocr_page_text(page)
