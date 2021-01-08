@@ -223,6 +223,7 @@ def process_file(hocrfile, textfile, tablepath):
             word_results = find_word_boxes(line, txt, paragraph, page,
                                            page_number)
             json.dump(word_results, sys.stdout)
+            sys.stdout.write('\n')
 
 
         if contains_match:
