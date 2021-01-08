@@ -7,4 +7,7 @@ setup(name='hocr',
       author_email='merlijn@archive.org',
       packages=['hocr'],
       scripts=['bin/hocr-combine-stream', 'bin/hocr-fold-chars',
-               'bin/hocr-text'])
+               'bin/hocr-text', 'bin/fts-text-annotate',
+               'bin/fts-text-match', 'bin/hocr-lookup-check',
+               'bin/hocr-lookup-create', 'bin/hocr-lookup-reconstruct',
+               'bin/hocr-text-paragraphs'])
