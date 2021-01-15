@@ -6,6 +6,7 @@ import argparse
 from lxml import etree
 
 from hocr.parse import hocr_page_iterator
+from hocr.util import open_if_required
 
 
 def get_header_footer(first_file):
@@ -41,13 +42,15 @@ def get_header_footer(first_file):
 
 
 def process_files(infile):
-    top, bottom = get_header_footer(infile)
+    fd = open_if_required(infile)
+    top, bottom = get_header_footer(fd)
 
     sys.stdout.buffer.write(top)
 
     page_no = 0
 
-    for page in hocr_page_iterator(infile):
+    fd.seek(0)
+    for page in hocr_page_iterator(fd):
         words = page.xpath(".//*[@class='ocrx_word']")
         for word in words:
             chars = word.xpath("*[@class='ocrx_cinfo']")
