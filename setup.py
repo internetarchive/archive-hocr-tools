@@ -1,7 +1,13 @@
-from setuptools import setup
+from setuptools import setup, find_packages
+from distutils.util import convert_path
+
+main_ns = {}
+ver_path = convert_path('hocr/version.py')
+with open(ver_path) as ver_file:
+    exec(ver_file.read(), main_ns)
 
 setup(name='hocr',
-      version='0.0.1',
+      version=main_ns['__version__'],
       description='hOCR (streaming) parsers and writers',
       author='Merlijn Boris Wolf Wajer',
       author_email='merlijn@archive.org',

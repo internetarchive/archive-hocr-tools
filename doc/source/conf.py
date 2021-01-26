@@ -18,7 +18,7 @@
 # -- Project information -----------------------------------------------------
 
 project = 'archive-hocr-tools'
-copyright = '2021, Merlijn Wajer <merlijn@archive.org>'
+copyright = '2020 - 2021, Merlijn Wajer <merlijn@archive.org>'
 author = 'Merlijn Wajer <merlijn@archive.org>'
 
 
