@@ -9,7 +9,7 @@ from hocr.parse import hocr_page_to_word_data_fast, hocr_page_get_dimensions
 from hocr.searching import hocr_load_lookup_table, hocr_lookup_page_by_dat, \
         hocr_lookup_by_plaintext_offset
 from hocr.util import open_if_required
-from hocr.text import hocr_paragraph_text, get_hocr_words
+from hocr.text import hocr_paragraph_text, get_paragraph_hocr_words
 
 # XXX: remove this
 import re
@@ -70,7 +70,7 @@ def find_word_boxes(solr_line, hocr_text, hocr_par, page, page_no):
     # rune indexes that we know we are interested in. We're going to count
     # the amount of runes in a word (+1 for a space) and do that until we
     # hit a match in match_indexes
-    hocr_words = get_hocr_words(hocr_par)
+    hocr_words = get_paragraph_hocr_words(hocr_par)
     hocr_word_idx = 0
 
     words = []

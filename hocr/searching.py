@@ -3,9 +3,9 @@ import json
 from lxml import etree
 
 from .util import open_if_required
-from .parse import hocr_page_iterator
+from .parse import hocr_page_iterator, hocr_page_to_word_data_fast
 from .text import hocr_get_xml_page_offsets, hocr_get_plaintext_page_offsets, \
-        hocr_page_text
+        hocr_page_text_from_word_data, get_paragraph_hocr_words
 
 
 def hocr_get_page_lookup_table(fd_or_path):
@@ -130,6 +130,18 @@ def hocr_get_fts_text(fd_or_path):
     Args:
 
     * fd_or_path: File descriptor or path to hOCR file
+
+    Returns:
+
+    Repeatedly yields a tuple of (``str``, ``list of int``),
+    page text and a list of word confidences on the page.
     """
     for page in hocr_page_iterator(fd_or_path):
-        yield hocr_page_text(page)
+        word_data = hocr_page_to_word_data_fast(page)
+        page_text = hocr_page_text_from_word_data(word_data)
+
+        confs = []
+        for paragraph in word_data:
+            confs += [x['confidence'] for x in get_paragraph_hocr_words(paragraph)]
+
+        yield page_text, confs

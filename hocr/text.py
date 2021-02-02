@@ -44,18 +44,18 @@ def hocr_paragraph_text(paragraph):
     return par_text
 
 
-def hocr_page_text(page):
+def hocr_page_text_from_word_data(word_data):
     """
-    Extract text from a hOCR XML page element.
+    Extract text from a pre-parsed hOCR page
 
     Args:
 
-    * page: hOCR XML page element
+    * word_data: as returned by ``hocr_page_to_word_data`` or
+      ``hocr_page_to_word_data_fast``
 
     Returns: page contents (`str`)
     """
     text = ''
-    word_data = hocr_page_to_word_data_fast(page)
 
     for paragraph in word_data:
         par_text = hocr_paragraph_text(paragraph)
@@ -68,7 +68,21 @@ def hocr_page_text(page):
     return text
 
 
-def get_hocr_words(paragraph):
+def hocr_page_text(page):
+    """
+    Extract text from a hOCR XML page element.
+
+    Args:
+
+    * page: hOCR XML page element
+
+    Returns: page contents (`str`)
+    """
+    word_data = hocr_page_to_word_data_fast(page)
+    return hocr_page_text_from_word_data(word_data)
+
+
+def get_paragraph_hocr_words(paragraph):
     """
     Find all the words in a hOCR paragraph.
 
