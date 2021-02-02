@@ -4,10 +4,6 @@ from .util import open_if_required
 from .parse import hocr_page_to_word_data, hocr_page_to_word_data_fast, \
         hocr_page_iterator, hocr_page_get_dimensions
 
-# TODO: Go for line conf
-MIN_WORD_CONF = 75
-
-
 
 def hocr_paragraph_text(paragraph):
     """
@@ -25,13 +21,12 @@ def hocr_paragraph_text(paragraph):
     * Tuple of (`str`, `bool`), where the `str` is the paragraph data, and the
       boolean if this text continues is to be merged with the next paragraph.
     """
+    word_confidences = []
     par_text = ''
 
     for line in paragraph['lines']:
         line_words = ''
         for word in line['words']:
-            if word['confidence'] < MIN_WORD_CONF:
-                continue
             line_words += word['text'] + ' '
 
         # Encode
@@ -88,8 +83,6 @@ def get_hocr_words(paragraph):
     words = []
     for line in paragraph['lines']:
         for word in line['words']:
-            if word['confidence'] < MIN_WORD_CONF:
-                continue
             words.append(word)
 
     return words
