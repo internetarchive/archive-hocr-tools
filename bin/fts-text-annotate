@@ -3,11 +3,14 @@
 import sys
 import argparse
 
+from hocr.util import open_if_required
+
 def process_file(textfile, pattern):
-    fp = open(textfile)
+    fp = open_if_required(textfile)
     pattern = pattern.lower()
 
     for line in fp:
+        line = line.decode('utf-8')
         linematch = line.lower()
         if pattern in linematch:
             start = 0
