@@ -16,4 +16,5 @@ setup(name='hocr',
                'bin/hocr-text', 'bin/fts-text-annotate',
                'bin/fts-text-match', 'bin/hocr-lookup-check',
                'bin/hocr-lookup-create', 'bin/hocr-lookup-reconstruct',
-               'bin/hocr-text-paragraphs', 'bin/hocr-extract-page'])
+               'bin/hocr-text-paragraphs', 'bin/hocr-extract-page',
+               'bin/abbyy-to-hocr'])

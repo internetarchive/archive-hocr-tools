@@ -1,0 +1,378 @@
+#!/usr/bin/env python
+
+import sys
+import argparse
+
+from lxml import etree
+
+from xml.sax.saxutils import escape as xmlescape
+
+from hocr.util import open_if_required
+
+import numpy as np
+
+# TODO:
+# X Actually output hOCR
+# X wordFirst=1 for charParams
+# X charConfidence for charParams
+# X character bounding box
+# X line baseline; maybe just calculate optimal line given char bounding boxes -- least squares (!)
+#   then (convert to hocr, test with pdf tooling)
+# X block (blockType="Text") bounding box
+# - Language mapping? (formatting lang="")
+# / Parse exact abbyy software version, other attributes, move those to hOCR files
+# / Test with different abbyy xml versions
+# - Test with unicode languages - also for writing direction and such -> maybe charParams.wordLeftMost can be used (if the first char is not wordLeftMost...)
+# X use <line fs="8.5" ...> (etc) for x_fsize for words?
+# - ocr_page image property - point to the zipview for convenient? or just some
+#   tmp path like Tesseract does?
+# - Add lots of (strict) assertions to prevent silent bugs (unknown areas/types, etc)
+# X Add scan_res (from image or item metadata? meh)
+
+# **** use hocrjs for visual debugging ****
+
+# Test versions:
+#
+# - 'ABBYY FineReader 11.0 (Extended OCR)'
+# - 'ABBYY FineReader 11.0'
+# - 'ABBYY FineReader 9.0'
+# - 'ABBYY FineReader 8.0'
+#
+# Potentially also some 12 and 14
+
+# {http://www.abbyy.com/FineReader_xml/FineReader10-schema-v1.xml}
+# {http://www.abbyy.com/FineReader_xml/FineReader6-schema-v1.xml}
+#
+# https://web.archive.org/web/20210212145336/https://support.abbyy.com/hc/en-us/articles/360017270080
+
+FINEREADER_6_SCHEMA = 'http://www.abbyy.com/FineReader_xml/FineReader6-schema-v1.xml'
+FINEREADER_11_SCHEMA = 'http://www.abbyy.com/FineReader_xml/FineReader10-schema-v1.xml'
+
+ABBYY_SCHEMAS = (FINEREADER_6_SCHEMA, FINEREADER_11_SCHEMA)
+
+
+def assemble_hocr_title_element(keyvals):
+    r = ''
+
+    for key, val in keyvals.items():
+        tot = [key]
+
+        if isinstance(val, list):
+            tot += val
+        else:
+            tot.append(val)
+
+        r += xmlescape(' '.join(tot))
+        r += '; '
+
+    if r:
+        # Strip off last '; '
+        return r[:-2]
+
+    return r
+
+
+def abbyy_get_metadata(file_path):
+    """ TODO """
+    fp = open_if_required(file_path)
+
+    tags = ('{%s}document' % FINEREADER_6_SCHEMA,
+            '{%s}document' % FINEREADER_11_SCHEMA)
+
+    doc = etree.iterparse(fp, tag=tags,
+                          events=('start',))
+    for act, elem in doc:
+        if elem.tag[-8:] == 'document':
+            schema = elem.tag[:-8][1:-1] # Remove document, '{' and '}'
+            producer = elem.attrib['producer']
+            elem.clear()
+            return producer, schema
+        else:
+            elem.clear()
+            break
+
+
+def abbyy_page_iterator(file_path, schema):
+    """
+    Returns an iterator to iterate over a (potentially large) Abbyy XML file in a
+    streaming manner.
+
+    Args:
+    * file_path (str): Path to abbyy file (if gzip, will get decompressed on the
+                       fly)
+
+    Returns:
+    Iterator returning a etree.Element of the page.
+    """
+    fp = open_if_required(file_path)
+
+    doc = etree.iterparse(fp, tag='{' + schema +'}page')
+    for act, elem in doc:
+        if elem.tag[-4:] == 'page':
+            page = elem
+            yield page
+
+        elem.clear()
+
+
+def abbyy_page_to_hocr_page(abbyy_page, schema, pageno=None):
+    """
+    Parses a single abbyy_page into word data.
+
+    TODO
+    """
+    # TODO: left to right, right to left
+
+    kv = {}
+    kv['bbox'] = ['0', '0', abbyy_page.attrib['width'], abbyy_page.attrib['height']]
+    #kv['title'] = '"unknown"' # TODO
+    if pageno is not None:
+        kv['ppageno'] = str(pageno)
+    else:
+        kv['ppageno'] = '0'
+    kv['image'] = 'https://archive.org/todo' # TODO: some image path?
+
+    dpi = int(abbyy_page.attrib['resolution'])
+    kv['scan_res'] = '%d %d' % (dpi, dpi)
+
+    pageelem = etree.Element('div', attrib={'class': 'ocr_page',
+        'id': 'todo', # TODO: unique id
+        'title': assemble_hocr_title_element(kv),
+        })
+
+    NS = schema
+
+    # TODO: We also want blockType="Picture" at least, probably just all.
+    # Let's skip Picture, Separator, etc atm
+    #for block in abbyy_page.xpath('./x:block[@blockType="Text"]',
+    for block in abbyy_page.xpath('./x:block',
+                                  namespaces={'x': NS}):
+        if block.attrib['blockType'] != 'Text':
+            # XXX: Support other blockType's
+            #print('Unsupported blockType:', block.attrib['blockType'])
+            continue
+
+        kv['bbox'] = [block.attrib['l'], block.attrib['t'], block.attrib['r'], block.attrib['b']]
+
+        blockelem = etree.Element('div', attrib={'class': 'ocr_carea'})
+        blockelem.attrib['title'] = assemble_hocr_title_element(kv)
+        blockelem.attrib['id'] = 'TODO'
+
+        # TODO: writing direction
+
+        for par in block.xpath('./x:text/x:par', namespaces={'x': NS}):
+            parelem = etree.Element('p', attrib={'class': 'ocr_par'})
+
+
+            parelem.attrib['lang'] = 'TODO' # perhaps look at line and transform the <formatting lang="">
+            #parelem.attrib[xmlescape('xml:lang'] = 'TODO'
+            parelem.attrib['id'] = 'TODO'
+
+            leftm = None
+            topm = None
+            rightm = None
+            bottomm = None
+
+            for line in par.xpath('./x:line', namespaces={'x': NS}):
+                formatting = line.getchildren()[0] # XXX: hacky
+
+                char_boxes = []
+                left = int(line.attrib['l'])
+                top = int(line.attrib['t'])
+                right = int(line.attrib['r'])
+                bottom = int(line.attrib['b'])
+                if leftm is None:
+                    leftm = left
+                    topm = top
+                    rightm = right
+                    bottomm = bottom
+                else:
+                    leftm = min(left, leftm)
+                    topm = min(top, topm)
+                    rightm = max(right, rightm)
+                    bottomm = max(bottom, bottomm)
+
+                lineelem = etree.Element('span', attrib={'class': 'ocr_line'})
+                kv = {}
+                kv['bbox'] = [line.attrib['l'], line.attrib['t'], line.attrib['r'], line.attrib['b']]
+
+                kv['x_size'] = formatting.attrib['fs'] # TODO: maybe need to adjust to dpi
+
+                last_wordelem, cboxes = _parse_chars(lineelem, line, formatting, NS)
+                char_boxes += cboxes
+
+                m, c = baseline_from_charboxes(char_boxes)
+                c -= bottomm
+                kv['baseline'] = '%f %d' % (m, c)
+
+                lineelem.attrib['title'] = assemble_hocr_title_element(kv)
+                lineelem.attrib['id'] = 'todo'
+
+                if last_wordelem is not None:
+                    lineelem.append(last_wordelem)
+
+                parelem.append(lineelem)
+
+            # TODO: Figure out why the bbox is missing for some
+            if leftm is not None:
+                kv = {'bbox': list(map(str, [leftm, topm, rightm, bottomm]))}
+                parelem.attrib['title'] = assemble_hocr_title_element(kv)
+
+            blockelem.append(parelem)
+
+        pageelem.append(blockelem)
+
+
+    return pageelem
+
+
+def _gather_word_data(wordelem, wordchar_bboxes, formatting):
+    # Turn these calculations into a function
+    word_bbox = [
+        str(min(x[0] for x in wordchar_bboxes)),
+        str(min(x[1] for x in wordchar_bboxes)),
+        str(max(x[2] for x in wordchar_bboxes)),
+        str(max(x[3] for x in wordchar_bboxes)),
+    ]
+
+    word_data = {'bbox': word_bbox,
+                 'x_wconf': '100', # TODO - this is still tricky...
+                 'x_fsize': formatting.attrib['fs']
+                 }
+
+    wordelem.attrib['id'] = 'TODO'
+    wordelem.attrib['title'] = \
+            assemble_hocr_title_element(word_data)
+
+
+def baseline_from_charboxes(charboxes):
+    points = []
+
+    x = []
+    y = []
+    for charbox in charboxes:
+        x.append((charbox[0] + charbox[2])/2)
+        y.append(charbox[3])
+
+    x = np.array(x)
+    y = np.array(y)
+
+    A = np.vstack([x, np.ones(len(x))]).T
+
+    r = np.linalg.lstsq(A, y, rcond=None)
+    m, c = r[0]
+    return float(m), int(c)
+
+    #print(list(zip(x,y)))
+    #print(r[0])
+    #import matplotlib.pyplot as plt
+    #m, c = r[0]
+
+    #_ = plt.plot(x, y, 'o', label='Original data', markersize=10)
+    #_ = plt.plot(x, m*x + c, 'r', label='Fitted line')
+    #_ = plt.legend()
+    #plt.savefig('/tmp/out.png')
+
+    #import sys
+    #sys.exit(1)
+
+
+def _parse_chars(lineelem, line, formatting, NS):
+    wordelem = etree.Element('span', attrib={'class': 'ocrx_word'})
+    first_word = True
+
+    wordchar_bboxes = []
+    for char in line.xpath('./x:formatting/x:charParams', namespaces={'x': NS}):
+        # wordFirst for 11, wordStart for 6, 8, 9
+        if 'wordFirst' in char.attrib and char.attrib['wordFirst'] == '1' or \
+           'wordStart' in char.attrib and char.attrib['wordStart'] == 'true':
+
+            if first_word:
+                first_word = False
+            else:
+                if wordelem is not None:
+                    lineelem.append(wordelem)
+                    # TODO: word data 'dir' (writing direction)
+                    _gather_word_data(wordelem, wordchar_bboxes, formatting)
+
+                # TODO: id, title (bbox, x_wconf, x_fsize)
+                wordelem = etree.Element('span',
+                                         attrib={'class': 'ocrx_word'})
+
+        # TODO: id, title (x_bboxes, x_conf)
+        charelem = etree.Element('span', attrib={'class': 'ocrx_cinfo'})
+        charelem.text = char.text
+
+        if 'charConfidence' in char.attrib:
+            # TODO: round to certain dot, although Abbyy seems to be
+            # just int
+            conf = str(float(char.attrib['charConfidence']))
+        else:
+            conf = None
+
+        if 'l' in char.attrib and 't' in char.attrib \
+                and 'r' in char.attrib and 'b' in char.attrib:
+            bbox = [int(char.attrib['l']),
+                    int(char.attrib['t']),
+                    int(char.attrib['r']),
+                    int(char.attrib['b'])]
+            wordchar_bboxes.append(bbox)
+        else:
+            import sys
+            print('empty bbox!', file=sys.stderr)
+            bbox = None
+
+        title_data = {}
+        # XXX: Revisit this, but it seems fine?
+        if bbox is not None:
+            title_data['bbox'] = [str(x) for x in bbox]
+            # XXX: should be x_bboxes, but hocrjs doesn't like that
+            #title_data['x_bboxes'] = [str(x) for x in bbox]
+        if conf is not None:
+            title_data['x_conf'] = conf
+
+        charelem.attrib['title'] = assemble_hocr_title_element(title_data)
+        wordelem.append(charelem)
+
+        # TODO: Let properties for wordelem here as well
+
+    _gather_word_data(wordelem, wordchar_bboxes, formatting)
+
+    return wordelem, wordchar_bboxes
+
+
+def process_files(filename):
+    # TODO: Do this proper, with etree.Elements?
+    # TODO: proper ocr-capabilities
+    producer, schema = abbyy_get_metadata(filename)
+    print('''<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+  <head>
+    <title></title>
+    <meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+    <meta name="ocr-system" content="%s" />
+    <meta name="ocr-capabilities" content="ocr_page ocr_carea ocr_par ocr_line ocrx_word ocrp_wconf ocrp_lang ocrp_dir ocrp_font ocrp_fsize" />
+  </head>
+  <body>
+''' % xmlescape(producer))
+
+    it = abbyy_page_iterator(filename, schema)
+    for idx, p in enumerate(it):
+        hocr_page = abbyy_page_to_hocr_page(p, schema, pageno=idx)
+        s = etree.tostring(hocr_page, pretty_print=True, method='xml',
+                           encoding='utf-8').decode('utf-8')
+        print(s)
+    print('''  </body>
+</html>
+''')
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description='Abbyy XML to character '
+                                                 'based hOCR converter')
+    parser.add_argument('-f', '--infile', help='Input file',
+                        type=str, default=None)
+    args = parser.parse_args()
+
+    process_files(args.infile)
