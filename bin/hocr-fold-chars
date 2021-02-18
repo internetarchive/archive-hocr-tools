@@ -8,10 +8,11 @@ from lxml import etree
 from hocr.parse import hocr_page_iterator
 from hocr.util import open_if_required
 
+SCHEMA = '{http://www.w3.org/1999/xhtml}'
 
 def get_header_footer(first_file):
     s = ''
-    doc = etree.iterparse(first_file)
+    doc = etree.iterparse(first_file, tag=SCHEMA+'html')
     for act, elem in doc:
         if elem.tag[-4:] == 'html':
             children = elem.getchildren()
