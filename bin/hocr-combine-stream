@@ -7,38 +7,7 @@ from glob import glob
 from lxml import etree
 
 from hocr.parse import hocr_page_iterator
-
-
-def get_header_footer(first_file):
-    s = ''
-    doc = etree.iterparse(first_file, events=('start',))
-    for act, elem in doc:
-        if elem.tag[-4:] == 'html':
-            children = elem.getchildren()
-            for child in children:
-                if child.tag[-4:] == 'body':
-                    chs = child.getchildren()
-                    for c in chs:
-                        child.remove(c)
-            s = etree.tostring(elem, pretty_print=True, method='xml',
-                               encoding='UTF-8', xml_declaration=True)
-            s = s.decode('utf-8')
-            break
-
-        elem.clear()
-
-    comp = s.split('<body>')
-
-    # XML-ho
-    header = comp[0] + '<body>' + '\n'
-    htmlidx = header.find('<html')
-    doctype = '''<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
-    "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">'''
-    header = header[:htmlidx] + doctype + '\n' + header[htmlidx:]
-
-    footer = comp[1].lstrip()
-
-    return header.encode('utf-8'), footer.encode('utf-8')
+from hocr.util import get_header_footer
 
 
 def process_files(files_to_process):

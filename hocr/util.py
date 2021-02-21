@@ -35,21 +35,34 @@ def get_header_footer(fd):
     * Tuple (header, footer)
     """
     s = ''
-    doc = etree.iterparse(fd, tag=HOCR_SCHEMA+'html')
+    tags = (HOCR_SCHEMA+'html', HOCR_SCHEMA+'head')
+    doc = etree.iterparse(fd, tag=tags, events=('start', 'end'))
+    html_elem = None
+    head_elem = None
+
     for act, elem in doc:
-        if elem.tag[-4:] == 'html':
-            children = elem.getchildren()
+        if elem.tag[-4:] == 'html' and act == 'start':
+            html_elem = elem
+            children = html_elem.getchildren()
             for child in children:
                 if child.tag[-4:] == 'body':
                     chs = child.getchildren()
                     for c in chs:
                         child.remove(c)
-            s = etree.tostring(elem, pretty_print=True, method='xml',
+                    # Remove body, we add an empty one
+                    html_elem.remove(child)
+
+        if elem.tag[-4:] == 'head' and act == 'end':
+            head_elem = elem
+            body_elem = etree.Element('body')
+
+            html_elem.append(head_elem)
+            html_elem.append(body_elem)
+
+            s = etree.tostring(html_elem, pretty_print=True, method='xml',
                                encoding='UTF-8', xml_declaration=True)
             s = s.decode('utf-8')
             break
-
-        elem.clear()
 
     comp = s.split('<body>')
 
