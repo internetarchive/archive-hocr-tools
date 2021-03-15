@@ -17,6 +17,7 @@ wdmap = {
 }
 
 BBOX_REGEX = re.compile(r'bbox((\s+\d+){4})')
+PPI_REGEX = re.compile(r'scan_res((\s+\d+){2})')
 BASELINE_REGEX = re.compile(r'baseline((\s+[\d\.\-]+){2})')
 X_WCONF_REGEX = re.compile(r'x_wconf((\s+[\d\.\-]+){1})')
 X_FSIZE_REGEX = re.compile(r'x_fsize((\s+[\d\.\-]+){1})')
@@ -67,6 +68,30 @@ def hocr_page_get_dimensions(hocr_page):
     pagebox = BBOX_REGEX.search(hocr_page.attrib['title']).group(1).split()
     width, height = int(pagebox[2]), int(pagebox[3])
     return width, height
+
+
+def hocr_page_get_scan_res(hocr_page):
+    """
+    Returns the X and Y resolution (in DPI) of a hocr page as returned by
+    hocr_page_iterator.
+
+    Args:
+
+    * hocr_page: a page as returned by hocr_page
+
+    Returns:
+
+    * (x_res, y_res): tuple of (int, int)
+
+    Or (None, None) if the scan_res property is not present.
+    """
+    pageppi = PPI_REGEX.search(hocr_page.attrib['title'])
+    if pageppi:
+        pageppi = pageppi.group(1).split()
+        x_res, y_res = int(pageppi[0]), int(pageppi[1])
+        return (x_res, y_res)
+    else:
+        return (None, None)
 
 
 # XXX: Maybe get rid of scaler here, and just move the normalisation of the
