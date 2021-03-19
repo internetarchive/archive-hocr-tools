@@ -51,6 +51,39 @@ FINEREADER_11_SCHEMA = 'http://www.abbyy.com/FineReader_xml/FineReader10-schema-
 ABBYY_SCHEMAS = (FINEREADER_6_SCHEMA, FINEREADER_11_SCHEMA)
 
 
+def page_id(pageno):
+    check_page_reset(pageno)
+    return 'page_%.06d' % pageno
+
+LAST_PAGE = None
+def check_page_reset(pageno):
+    global LAST_PAGE
+
+    if LAST_PAGE is None:
+        LAST_PAGE = pageno
+
+    if pageno != LAST_PAGE:
+        LAST_PAGE = pageno
+        reset_ids()
+
+__IDS = {'block': 0,
+         'par': 0,
+         'line': 0,
+         'word': 0}
+
+def reset_ids():
+    global __IDS
+    for x in __IDS:
+        __IDS[x] = 0
+
+def get_id(pageno, name):
+    global __IDS
+    check_page_reset(pageno)
+    ret = '%s_%.06d_%.06d' % (name, pageno, __IDS[name])
+    __IDS[name] += 1
+
+    return ret
+
 def assemble_hocr_title_element(keyvals):
     r = ''
 
@@ -136,7 +169,7 @@ def abbyy_page_to_hocr_page(abbyy_page, schema, pageno=None):
     kv['scan_res'] = '%d %d' % (dpi, dpi)
 
     pageelem = etree.Element('div', attrib={'class': 'ocr_page',
-        'id': 'todo', # TODO: unique id
+        'id': page_id(pageno),
         'title': assemble_hocr_title_element(kv),
         })
 
@@ -156,7 +189,7 @@ def abbyy_page_to_hocr_page(abbyy_page, schema, pageno=None):
 
         blockelem = etree.Element('div', attrib={'class': 'ocr_carea'})
         blockelem.attrib['title'] = assemble_hocr_title_element(kv)
-        blockelem.attrib['id'] = 'TODO'
+        blockelem.attrib['id'] = get_id(pageno, 'block')
 
         # TODO: writing direction
 
@@ -166,7 +199,7 @@ def abbyy_page_to_hocr_page(abbyy_page, schema, pageno=None):
 
             parelem.attrib['lang'] = 'TODO' # perhaps look at line and transform the <formatting lang="">
             #parelem.attrib[xmlescape('xml:lang'] = 'TODO'
-            parelem.attrib['id'] = 'TODO'
+            parelem.attrib['id'] = get_id(pageno, 'par')
 
             leftm = None
             topm = None
@@ -198,14 +231,14 @@ def abbyy_page_to_hocr_page(abbyy_page, schema, pageno=None):
 
                 kv['x_size'] = formatting.attrib['fs'] # TODO: maybe need to adjust to dpi
 
-                last_wordelem, cboxes = _parse_chars(lineelem, line, formatting, NS)
+                last_wordelem, cboxes = _parse_chars(pageno, lineelem, line, formatting, NS)
                 char_boxes += cboxes
 
                 m, c = baseline_from_charboxes(char_boxes)
                 kv['baseline'] = '%f %d' % (m, c)
 
                 lineelem.attrib['title'] = assemble_hocr_title_element(kv)
-                lineelem.attrib['id'] = 'todo'
+                lineelem.attrib['id'] = get_id(pageno, 'line')
 
                 if last_wordelem is not None:
                     lineelem.append(last_wordelem)
@@ -225,7 +258,7 @@ def abbyy_page_to_hocr_page(abbyy_page, schema, pageno=None):
     return pageelem
 
 
-def _gather_word_data(wordelem, wordchar_bboxes, formatting):
+def _gather_word_data(pageno, wordelem, wordchar_bboxes, formatting):
     # Turn these calculations into a function
     word_bbox = [
         str(min(x[0] for x in wordchar_bboxes)),
@@ -239,7 +272,7 @@ def _gather_word_data(wordelem, wordchar_bboxes, formatting):
                  'x_fsize': formatting.attrib['fs']
                  }
 
-    wordelem.attrib['id'] = 'TODO'
+    wordelem.attrib['id'] = get_id(pageno, 'word')
     wordelem.attrib['title'] = \
             assemble_hocr_title_element(word_data)
 
@@ -279,7 +312,7 @@ def baseline_from_charboxes(charboxes):
     #sys.exit(1)
 
 
-def _parse_chars(lineelem, line, formatting, NS):
+def _parse_chars(pageno, lineelem, line, formatting, NS):
     wordelem = etree.Element('span', attrib={'class': 'ocrx_word'})
     first_word = True
 
@@ -296,7 +329,7 @@ def _parse_chars(lineelem, line, formatting, NS):
                 if wordelem is not None:
                     lineelem.append(wordelem)
                     # TODO: word data 'dir' (writing direction)
-                    _gather_word_data(wordelem, wordchar_bboxes, formatting)
+                    _gather_word_data(pageno, wordelem, wordchar_bboxes, formatting)
 
                 # TODO: id, title (bbox, x_wconf, x_fsize)
                 wordelem = etree.Element('span',
@@ -340,7 +373,7 @@ def _parse_chars(lineelem, line, formatting, NS):
 
         # TODO: Let properties for wordelem here as well
 
-    _gather_word_data(wordelem, wordchar_bboxes, formatting)
+    _gather_word_data(pageno, wordelem, wordchar_bboxes, formatting)
 
     return wordelem, all_wordchar_bboxes
 
