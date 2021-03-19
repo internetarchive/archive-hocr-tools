@@ -300,6 +300,7 @@ def _parse_chars(lineelem, line, formatting, NS):
                 # TODO: id, title (bbox, x_wconf, x_fsize)
                 wordelem = etree.Element('span',
                                          attrib={'class': 'ocrx_word'})
+            wordchar_bboxes = []
 
         # TODO: id, title (x_bboxes, x_conf)
         charelem = etree.Element('span', attrib={'class': 'ocrx_cinfo'})
