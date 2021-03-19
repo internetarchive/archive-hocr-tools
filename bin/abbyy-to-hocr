@@ -202,7 +202,6 @@ def abbyy_page_to_hocr_page(abbyy_page, schema, pageno=None):
                 char_boxes += cboxes
 
                 m, c = baseline_from_charboxes(char_boxes)
-                c -= bottomm
                 kv['baseline'] = '%f %d' % (m, c)
 
                 lineelem.attrib['title'] = assemble_hocr_title_element(kv)
@@ -256,6 +255,9 @@ def baseline_from_charboxes(charboxes):
 
     x = np.array(x)
     y = np.array(y)
+
+    x -= x.min()
+    y -= y.min()
 
     A = np.vstack([x, np.ones(len(x))]).T
 
