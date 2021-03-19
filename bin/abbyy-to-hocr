@@ -16,8 +16,8 @@ import numpy as np
 # X wordFirst=1 for charParams
 # X charConfidence for charParams
 # X character bounding box
-# X line baseline; maybe just calculate optimal line given char bounding boxes -- least squares (!)
-#   then (convert to hocr, test with pdf tooling)
+# X line baseline; maybe just calculate optimal line given char bounding boxes
+# -- least squares (!) then (convert to hocr, test with pdf tooling)
 # X block (blockType="Text") bounding box
 # - Language mapping? (formatting lang="")
 # / Parse exact abbyy software version, other attributes, move those to hOCR files
@@ -256,7 +256,7 @@ def baseline_from_charboxes(charboxes):
     x = np.array(x)
     y = np.array(y)
 
-    x -= x.min()
+    #x -= x.min()
     y -= y.min()
 
     A = np.vstack([x, np.ones(len(x))]).T
@@ -284,6 +284,7 @@ def _parse_chars(lineelem, line, formatting, NS):
     first_word = True
 
     wordchar_bboxes = []
+    all_wordchar_bboxes = []
     for char in line.xpath('./x:formatting/x:charParams', namespaces={'x': NS}):
         # wordFirst for 11, wordStart for 6, 8, 9
         if 'wordFirst' in char.attrib and char.attrib['wordFirst'] == '1' or \
@@ -320,8 +321,8 @@ def _parse_chars(lineelem, line, formatting, NS):
                     int(char.attrib['r']),
                     int(char.attrib['b'])]
             wordchar_bboxes.append(bbox)
+            all_wordchar_bboxes.append(bbox)
         else:
-            import sys
             print('empty bbox!', file=sys.stderr)
             bbox = None
 
@@ -341,7 +342,7 @@ def _parse_chars(lineelem, line, formatting, NS):
 
     _gather_word_data(wordelem, wordchar_bboxes, formatting)
 
-    return wordelem, wordchar_bboxes
+    return wordelem, all_wordchar_bboxes
 
 
 def process_files(filename):
