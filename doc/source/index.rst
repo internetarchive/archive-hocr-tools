@@ -93,6 +93,18 @@ Usage::
     fts-text-match --hocr hocr-file.html --annotated-text hocr-plain-hl.txt --table hocr-file-lookup.json
 
 
+abbyy-to-hocr
+~~~~~~~~~~~~~
+
+Converts an Abbyy XML file to a hOCR file, preserving as much information as
+possible.
+
+Usage::
+
+    fts-text-match --infile abbyy_file.xml > converted_hocr_file.xml
+
+
+
 Testing tools
 -------------
 
