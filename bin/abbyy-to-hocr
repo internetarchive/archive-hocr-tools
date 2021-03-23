@@ -154,6 +154,77 @@ def abbyy_page_iterator(file_path, schema):
         elem.clear()
 
 
+def process_text_block(pageelem, pageno, NS, block):
+    kv = {}
+    kv['bbox'] = [block.attrib['l'], block.attrib['t'], block.attrib['r'], block.attrib['b']]
+
+    blockelem = etree.Element('div', attrib={'class': 'ocr_carea'})
+    blockelem.attrib['title'] = assemble_hocr_title_element(kv)
+    blockelem.attrib['id'] = get_id(pageno, 'block')
+
+    # TODO: check writing direction correctness (do we want it per line, too?)
+
+    for par in block.xpath('./x:text/x:par', namespaces={'x': NS}):
+        parelem = etree.Element('p', attrib={'class': 'ocr_par'})
+
+        parelem.attrib['lang'] = 'TODO' # perhaps look at line and transform the <formatting lang="">
+        #parelem.attrib[xmlescape('xml:lang'] = 'TODO'
+        parelem.attrib['id'] = get_id(pageno, 'par')
+
+        leftm = None
+        topm = None
+        rightm = None
+        bottomm = None
+
+        for line in par.xpath('./x:line', namespaces={'x': NS}):
+            formatting = line.getchildren()[0] # XXX: hacky
+
+            char_boxes = []
+            left = int(line.attrib['l'])
+            top = int(line.attrib['t'])
+            right = int(line.attrib['r'])
+            bottom = int(line.attrib['b'])
+            if leftm is None:
+                leftm = left
+                topm = top
+                rightm = right
+                bottomm = bottom
+            else:
+                leftm = min(left, leftm)
+                topm = min(top, topm)
+                rightm = max(right, rightm)
+                bottomm = max(bottom, bottomm)
+
+            lineelem = etree.Element('span', attrib={'class': 'ocr_line'})
+            kv = {}
+            kv['bbox'] = [line.attrib['l'], line.attrib['t'], line.attrib['r'], line.attrib['b']]
+
+            kv['x_size'] = formatting.attrib['fs'] # TODO: maybe need to adjust to dpi
+
+            last_wordelem, cboxes = _parse_chars(pageno, lineelem, line, formatting, NS)
+            char_boxes += cboxes
+
+            m, c = baseline_from_charboxes(char_boxes)
+            kv['baseline'] = '%f %d' % (m, c)
+
+            lineelem.attrib['title'] = assemble_hocr_title_element(kv)
+            lineelem.attrib['id'] = get_id(pageno, 'line')
+
+            if last_wordelem is not None:
+                lineelem.append(last_wordelem)
+
+            parelem.append(lineelem)
+
+        # TODO: Figure out why the bbox is missing for some
+        if leftm is not None:
+            kv = {'bbox': list(map(str, [leftm, topm, rightm, bottomm]))}
+            parelem.attrib['title'] = assemble_hocr_title_element(kv)
+
+        blockelem.append(parelem)
+
+    pageelem.append(blockelem)
+
+
 def abbyy_page_to_hocr_page(abbyy_page, schema, pageno=None):
     """
     Parses a single abbyy_page into word data.
@@ -197,79 +268,14 @@ def abbyy_page_to_hocr_page(abbyy_page, schema, pageno=None):
             blockelem.attrib['id'] = get_id(pageno, 'photo')
             pageelem.append(blockelem)
             continue
+        elif block.attrib['blockType'] == 'Table':
+            pass
         elif block.attrib['blockType'] != 'Text':
             # We don't mind ignoring other blocktypes, I think (XXX: re-check)
             #print('Unsupported blockType:', block.attrib['blockType'])
             continue
 
-        kv['bbox'] = [block.attrib['l'], block.attrib['t'], block.attrib['r'], block.attrib['b']]
-
-        blockelem = etree.Element('div', attrib={'class': 'ocr_carea'})
-        blockelem.attrib['title'] = assemble_hocr_title_element(kv)
-        blockelem.attrib['id'] = get_id(pageno, 'block')
-
-        # TODO: writing direction
-
-        for par in block.xpath('./x:text/x:par', namespaces={'x': NS}):
-            parelem = etree.Element('p', attrib={'class': 'ocr_par'})
-
-
-            parelem.attrib['lang'] = 'TODO' # perhaps look at line and transform the <formatting lang="">
-            #parelem.attrib[xmlescape('xml:lang'] = 'TODO'
-            parelem.attrib['id'] = get_id(pageno, 'par')
-
-            leftm = None
-            topm = None
-            rightm = None
-            bottomm = None
-
-            for line in par.xpath('./x:line', namespaces={'x': NS}):
-                formatting = line.getchildren()[0] # XXX: hacky
-
-                char_boxes = []
-                left = int(line.attrib['l'])
-                top = int(line.attrib['t'])
-                right = int(line.attrib['r'])
-                bottom = int(line.attrib['b'])
-                if leftm is None:
-                    leftm = left
-                    topm = top
-                    rightm = right
-                    bottomm = bottom
-                else:
-                    leftm = min(left, leftm)
-                    topm = min(top, topm)
-                    rightm = max(right, rightm)
-                    bottomm = max(bottom, bottomm)
-
-                lineelem = etree.Element('span', attrib={'class': 'ocr_line'})
-                kv = {}
-                kv['bbox'] = [line.attrib['l'], line.attrib['t'], line.attrib['r'], line.attrib['b']]
-
-                kv['x_size'] = formatting.attrib['fs'] # TODO: maybe need to adjust to dpi
-
-                last_wordelem, cboxes = _parse_chars(pageno, lineelem, line, formatting, NS)
-                char_boxes += cboxes
-
-                m, c = baseline_from_charboxes(char_boxes)
-                kv['baseline'] = '%f %d' % (m, c)
-
-                lineelem.attrib['title'] = assemble_hocr_title_element(kv)
-                lineelem.attrib['id'] = get_id(pageno, 'line')
-
-                if last_wordelem is not None:
-                    lineelem.append(last_wordelem)
-
-                parelem.append(lineelem)
-
-            # TODO: Figure out why the bbox is missing for some
-            if leftm is not None:
-                kv = {'bbox': list(map(str, [leftm, topm, rightm, bottomm]))}
-                parelem.attrib['title'] = assemble_hocr_title_element(kv)
-
-            blockelem.append(parelem)
-
-        pageelem.append(blockelem)
+        process_text_block(pageelem, pageno, NS, block)
 
 
     return pageelem
