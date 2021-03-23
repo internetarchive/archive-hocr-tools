@@ -20,7 +20,7 @@ import numpy as np
 # -- least squares (!) then (convert to hocr, test with pdf tooling)
 # X block (blockType="Text") bounding box
 # - Language mapping? (formatting lang="")
-# / Parse exact abbyy software version, other attributes, move those to hOCR files
+# X Parse exact abbyy software version, other attributes, move those to hOCR files
 # / Test with different abbyy xml versions
 # X Test with unicode languages - also for writing direction and such -> maybe charParams.wordLeftMost can be used (if the first char is not wordLeftMost...)
 # X use <line fs="8.5" ...> (etc) for x_fsize for words?
@@ -30,16 +30,14 @@ import numpy as np
 # X Add scan_res (from image or item metadata? meh)
 # - word confidence wordFromDictionary (?) + char confs?, 'suspicious' attribute
 
-# **** use hocrjs for visual debugging ****
-
-# Test versions:
+# Tested versions:
 #
 # - 'ABBYY FineReader 11.0 (Extended OCR)'
 # - 'ABBYY FineReader 11.0'
 # - 'ABBYY FineReader 9.0'
 # - 'ABBYY FineReader 8.0'
 #
-# Potentially also some 12 and 14
+# Potentially also some 12 and 14?
 
 # {http://www.abbyy.com/FineReader_xml/FineReader10-schema-v1.xml}
 # {http://www.abbyy.com/FineReader_xml/FineReader6-schema-v1.xml}
@@ -52,10 +50,10 @@ import numpy as np
 #: Finereader schemas
 FINEREADER_6_SCHEMA = 'http://www.abbyy.com/FineReader_xml/FineReader6-schema-v1.xml'
 FINEREADER_11_SCHEMA = 'http://www.abbyy.com/FineReader_xml/FineReader10-schema-v1.xml'
-
 ABBYY_SCHEMAS = (FINEREADER_6_SCHEMA, FINEREADER_11_SCHEMA)
 
 
+# Functions related to unique id="" generation
 def page_id(pageno):
     check_page_reset(pageno)
     return 'page_%.06d' % pageno
@@ -75,7 +73,8 @@ __IDS = {'block': 0,
          'par': 0,
          'line': 0,
          'word': 0,
-         'photo': 0,}
+         'photo': 0,
+         'table': 0,}
 
 def reset_ids():
     global __IDS
@@ -90,7 +89,17 @@ def get_id(pageno, name):
 
     return ret
 
+
 def assemble_hocr_title_element(keyvals):
+    """
+    Create a title="<...>" string from key, value pairs
+
+    Args:
+
+    * keyvals (dict): key value pairs
+
+    Returns: string to insert as title (without the surrounding double quotes)
+    """
     r = ''
 
     for key, val in keyvals.items():
@@ -112,7 +121,11 @@ def assemble_hocr_title_element(keyvals):
 
 
 def abbyy_get_metadata(file_path):
-    """ TODO """
+    """
+    Open an Abbyy Finereader XML file and extract the schema of the file.
+
+    Returns the version (producer) and the schema/namespace as a tuple.
+    """
     fp = open_if_required(file_path)
 
     tags = ('{%s}document' % FINEREADER_6_SCHEMA,
@@ -154,14 +167,16 @@ def abbyy_page_iterator(file_path, schema):
         elem.clear()
 
 
-def process_text_block(pageelem, pageno, NS, block):
-    kv = {}
-    kv['bbox'] = [block.attrib['l'], block.attrib['t'], block.attrib['r'], block.attrib['b']]
+def process_text_block(pageno, NS, block, parent_block):
+    """
+    Process a <text> block.
 
-    blockelem = etree.Element('div', attrib={'class': 'ocr_carea'})
-    blockelem.attrib['title'] = assemble_hocr_title_element(kv)
-    blockelem.attrib['id'] = get_id(pageno, 'block')
-
+    Args:
+    * pageno (int): page number, zero indexed
+    * NS (str): namespace of this XML as returned by abbyy_get_metadata
+    * block (etree.Element): Abbyy XML block to process
+    * parent_block (etree.Element): parent (target) element to add elements to.
+    """
     # TODO: check writing direction correctness (do we want it per line, too?)
 
     for par in block.xpath('./x:text/x:par', namespaces={'x': NS}):
@@ -199,9 +214,12 @@ def process_text_block(pageelem, pageno, NS, block):
             kv = {}
             kv['bbox'] = [line.attrib['l'], line.attrib['t'], line.attrib['r'], line.attrib['b']]
 
+            # Tesseract uses x_size, it's not spec compliant, but let's use it
+            # anyway for now.
             kv['x_size'] = formatting.attrib['fs'] # TODO: maybe need to adjust to dpi
+            #kv['x_fsize'] = str(int(float(formatting.attrib['fs']))) # TODO: maybe need to adjust to dpi
 
-            last_wordelem, cboxes = _parse_chars(pageno, lineelem, line, formatting, NS)
+            last_wordelem, cboxes = process_characters(pageno, NS, line, lineelem, formatting)
             char_boxes += cboxes
 
             m, c = baseline_from_charboxes(char_boxes)
@@ -220,9 +238,7 @@ def process_text_block(pageelem, pageno, NS, block):
             kv = {'bbox': list(map(str, [leftm, topm, rightm, bottomm]))}
             parelem.attrib['title'] = assemble_hocr_title_element(kv)
 
-        blockelem.append(parelem)
-
-    pageelem.append(blockelem)
+        parent_block.append(parelem)
 
 
 def abbyy_page_to_hocr_page(abbyy_page, schema, pageno=None):
@@ -252,9 +268,15 @@ def abbyy_page_to_hocr_page(abbyy_page, schema, pageno=None):
 
     NS = schema
 
-    # TODO: We also want blockType="Picture" at least, probably just all.
-    # Let's skip Picture, Separator, etc atm
-    #for block in abbyy_page.xpath('./x:block[@blockType="Text"]',
+    # <xs:enumeration value="Text"/>
+    # <xs:enumeration value="Table"/>
+    # <xs:enumeration value="Picture"/>
+    # <xs:enumeration value="Barcode"/>
+    # <xs:enumeration value="Separator"/>
+    # <xs:enumeration value="SeparatorsBox"/>
+    # <xs:enumeration value="Checkmark"/>
+    # <xs:enumeration value="GroupCheckmark"/>
+    # Let's skip Separator etc atm
     for block in abbyy_page.xpath('./x:block',
                                   namespaces={'x': NS}):
         if block.attrib['blockType'] == 'Picture':
@@ -267,16 +289,40 @@ def abbyy_page_to_hocr_page(abbyy_page, schema, pageno=None):
             blockelem.attrib['title'] = assemble_hocr_title_element(kv)
             blockelem.attrib['id'] = get_id(pageno, 'photo')
             pageelem.append(blockelem)
-            continue
         elif block.attrib['blockType'] == 'Table':
-            pass
-        elif block.attrib['blockType'] != 'Text':
+            # XXX: div, span or table? https://groups.google.com/g/ocropus/c/-s33xn9fBGY
+            #       <table class="ocr_table"> ... </table>
+            #       or
+            #       <span class="ocr_table"><table> ... </table></table>
+            tableelem = etree.Element('table', attrib={'class': 'ocr_table'})
+            #tableelem = etree.Element('div', attrib={'class': 'ocr_table'})
+            kv = {}
+            kv['bbox'] = [block.attrib['l'], block.attrib['t'], block.attrib['r'], block.attrib['b']]
+            tableelem.attrib['title'] = assemble_hocr_title_element(kv)
+            tableelem.attrib['id'] = get_id(pageno, 'table')
+
+            for row in block.xpath('./x:row', namespaces={'x': NS}):
+                rowelem = etree.Element('tr')
+                for cell in row.xpath('./x:cell', namespaces={'x': NS}):
+                    cellelem = etree.Element('td')
+                    process_text_block(pageno, NS, cell, cellelem)
+                    rowelem.append(cellelem)
+
+                tableelem.append(rowelem)
+            pageelem.append(tableelem)
+        elif block.attrib['blockType'] == 'Text':
+            kv = {}
+            kv['bbox'] = [block.attrib['l'], block.attrib['t'], block.attrib['r'], block.attrib['b']]
+            blockelem = etree.Element('div', attrib={'class': 'ocr_carea'})
+            blockelem.attrib['title'] = assemble_hocr_title_element(kv)
+            blockelem.attrib['id'] = get_id(pageno, 'block')
+
+            process_text_block(pageno, NS, block, blockelem)
+            pageelem.append(blockelem)
+        else:
             # We don't mind ignoring other blocktypes, I think (XXX: re-check)
             #print('Unsupported blockType:', block.attrib['blockType'])
             continue
-
-        process_text_block(pageelem, pageno, NS, block)
-
 
     return pageelem
 
@@ -292,6 +338,7 @@ def _gather_word_data(pageno, wordelem, wordchar_bboxes, formatting):
 
     word_data = {'bbox': word_bbox,
                  'x_wconf': '100', # TODO - this is still tricky...
+                 #'x_fsize': str(int(float(formatting.attrib['fs'])))
                  'x_fsize': formatting.attrib['fs']
                  }
 
@@ -301,41 +348,60 @@ def _gather_word_data(pageno, wordelem, wordchar_bboxes, formatting):
 
 
 def baseline_from_charboxes(charboxes):
+    """
+    Calculates the baseline of characters part of a single line segment using
+    least squares on the center ((left+right)/2) of the bottom of every bounding box.
+
+    Args:
+
+    * charboxes: list of character bounding boxes (which are a list of 4 entries)
+
+    Returns:
+
+    Tuple of m, c (float, int) where m is the increment and c is the offset.
+    """
     points = []
 
     x = []
     y = []
     for charbox in charboxes:
+        # (Left+Right)/2
         x.append((charbox[0] + charbox[2])/2)
+        # Bottom
         y.append(charbox[3])
 
     x = np.array(x)
     y = np.array(y)
 
-    #x -= x.min()
+    # Normalise to minimal coordinate, maybe we ought to normalise to the first
+    # coordinate?
     y -= y.min()
 
     A = np.vstack([x, np.ones(len(x))]).T
 
     r = np.linalg.lstsq(A, y, rcond=None)
     m, c = r[0]
+
     return float(m), int(c)
 
-    #print(list(zip(x,y)))
-    #print(r[0])
-    #import matplotlib.pyplot as plt
-    #m, c = r[0]
 
-    #_ = plt.plot(x, y, 'o', label='Original data', markersize=10)
-    #_ = plt.plot(x, m*x + c, 'r', label='Fitted line')
-    #_ = plt.legend()
-    #plt.savefig('/tmp/out.png')
+def process_characters(pageno, NS, line, lineelem, formatting):
+    """
+    Process characters in a <line> element
 
-    #import sys
-    #sys.exit(1)
+    Args:
 
+    * pageno (int): Page number, zero indexed
+    * NS (str): namespace of this XML as returned by abbyy_get_metadata
+    * line (etree.Element): line element to process
+    * lineelem (etree.Element): target element
+    * formatting (etree.Element): <formatting> element of the line
 
-def _parse_chars(pageno, lineelem, line, formatting, NS):
+    Returns:
+
+    Tuple of the last word element (etree.Element) and a list of all the
+    bounding boxes of the characters encountered.
+    """
     wordelem = etree.Element('span', attrib={'class': 'ocrx_word'})
     first_word = True
     word_start = True
@@ -375,14 +441,13 @@ def _parse_chars(pageno, lineelem, line, formatting, NS):
                 wordelem.attrib['dir'] = 'rtl'
 
 
-        # TODO: id, title (x_bboxes, x_conf)
         charelem = etree.Element('span', attrib={'class': 'ocrx_cinfo'})
         charelem.text = char.text
 
         if 'charConfidence' in char.attrib:
             # TODO: round to certain dot, although Abbyy seems to be
             # just int
-            conf = str(float(char.attrib['charConfidence']))
+            conf = float(char.attrib['charConfidence'])
         else:
             conf = None
 
@@ -399,13 +464,16 @@ def _parse_chars(pageno, lineelem, line, formatting, NS):
             bbox = None
 
         title_data = {}
-        # XXX: Revisit this, but it seems fine?
         if bbox is not None:
-            title_data['bbox'] = [str(x) for x in bbox]
             # XXX: should be x_bboxes, but hocrjs doesn't like that
+            title_data['bbox'] = [str(x) for x in bbox]
             #title_data['x_bboxes'] = [str(x) for x in bbox]
         if conf is not None:
-            title_data['x_conf'] = conf
+            # Abbyy sometimes reports -1
+            if conf < 0:
+                conf = 0.
+            title_data['x_confs'] = str(conf)
+            #title_data['x_confs'] = conf
 
         charelem.attrib['title'] = assemble_hocr_title_element(title_data)
         wordelem.append(charelem)
@@ -422,8 +490,7 @@ def _parse_chars(pageno, lineelem, line, formatting, NS):
 
 
 def process_files(filename):
-    # TODO: Do this proper, with etree.Elements?
-    # TODO: proper ocr-capabilities
+    # TODO: Evaluate proper ocr-capabilities
     producer, schema = abbyy_get_metadata(filename)
     print('''<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
