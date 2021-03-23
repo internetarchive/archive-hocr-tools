@@ -22,12 +22,13 @@ import numpy as np
 # - Language mapping? (formatting lang="")
 # / Parse exact abbyy software version, other attributes, move those to hOCR files
 # / Test with different abbyy xml versions
-# - Test with unicode languages - also for writing direction and such -> maybe charParams.wordLeftMost can be used (if the first char is not wordLeftMost...)
+# X Test with unicode languages - also for writing direction and such -> maybe charParams.wordLeftMost can be used (if the first char is not wordLeftMost...)
 # X use <line fs="8.5" ...> (etc) for x_fsize for words?
 # - ocr_page image property - point to the zipview for convenient? or just some
 #   tmp path like Tesseract does?
 # - Add lots of (strict) assertions to prevent silent bugs (unknown areas/types, etc)
 # X Add scan_res (from image or item metadata? meh)
+# - word confidence wordFromDictionary (?) + char confs?, 'suspicious' attribute
 
 # **** use hocrjs for visual debugging ****
 
@@ -43,8 +44,12 @@ import numpy as np
 # {http://www.abbyy.com/FineReader_xml/FineReader10-schema-v1.xml}
 # {http://www.abbyy.com/FineReader_xml/FineReader6-schema-v1.xml}
 #
+# This also exists online at least:
+# {http://www.abbyy.com/FineReader_xml/FineReader9-schema-v1.xml}
+#
 # https://web.archive.org/web/20210212145336/https://support.abbyy.com/hc/en-us/articles/360017270080
 
+#: Finereader schemas
 FINEREADER_6_SCHEMA = 'http://www.abbyy.com/FineReader_xml/FineReader6-schema-v1.xml'
 FINEREADER_11_SCHEMA = 'http://www.abbyy.com/FineReader_xml/FineReader10-schema-v1.xml'
 
@@ -69,7 +74,8 @@ def check_page_reset(pageno):
 __IDS = {'block': 0,
          'par': 0,
          'line': 0,
-         'word': 0}
+         'word': 0,
+         'photo': 0,}
 
 def reset_ids():
     global __IDS
@@ -180,8 +186,19 @@ def abbyy_page_to_hocr_page(abbyy_page, schema, pageno=None):
     #for block in abbyy_page.xpath('./x:block[@blockType="Text"]',
     for block in abbyy_page.xpath('./x:block',
                                   namespaces={'x': NS}):
-        if block.attrib['blockType'] != 'Text':
-            # XXX: Support other blockType's
+        if block.attrib['blockType'] == 'Picture':
+            # TODO: Can a Picture contain multiple <region>s?
+            # Use ocr_photo, since ocr_image suggests the image is probably
+            # better expressed in vector graphics, and we don't know.
+            blockelem = etree.Element('div', attrib={'class': 'ocr_photo'})
+            kv = {}
+            kv['bbox'] = kv['bbox'] = [block.attrib['l'], block.attrib['t'], block.attrib['r'], block.attrib['b']]
+            blockelem.attrib['title'] = assemble_hocr_title_element(kv)
+            blockelem.attrib['id'] = get_id(pageno, 'photo')
+            pageelem.append(blockelem)
+            continue
+        elif block.attrib['blockType'] != 'Text':
+            # We don't mind ignoring other blocktypes, I think (XXX: re-check)
             #print('Unsupported blockType:', block.attrib['blockType'])
             continue
 
@@ -315,6 +332,7 @@ def baseline_from_charboxes(charboxes):
 def _parse_chars(pageno, lineelem, line, formatting, NS):
     wordelem = etree.Element('span', attrib={'class': 'ocrx_word'})
     first_word = True
+    word_start = True
 
     wordchar_bboxes = []
     all_wordchar_bboxes = []
@@ -328,13 +346,28 @@ def _parse_chars(pageno, lineelem, line, formatting, NS):
             else:
                 if wordelem is not None:
                     lineelem.append(wordelem)
-                    # TODO: word data 'dir' (writing direction)
+                    if 'dir' in wordelem.attrib and wordelem.attrib['dir'] == 'rtl':
+                        wordelem[-1].text += chr(0x200e)
+
                     _gather_word_data(pageno, wordelem, wordchar_bboxes, formatting)
 
                 # TODO: id, title (bbox, x_wconf, x_fsize)
                 wordelem = etree.Element('span',
                                          attrib={'class': 'ocrx_word'})
+
+            word_start = True
             wordchar_bboxes = []
+
+        # Check if the first character has wordLeftMost="1" set, otherwise,
+        # assuming right-to-left
+        # This only exists for FineReader 10 schema
+        if 'wordLeftMost' in char.attrib and char.attrib['wordLeftMost'] == '1':
+            # TODO: clean up this logic some (what is wordLeftMost doesn't exist)
+            if word_start:
+                wordelem.attrib['dir'] = 'ltr'
+            else:
+                wordelem.attrib['dir'] = 'rtl'
+
 
         # TODO: id, title (x_bboxes, x_conf)
         charelem = etree.Element('span', attrib={'class': 'ocrx_cinfo'})
@@ -371,7 +404,11 @@ def _parse_chars(pageno, lineelem, line, formatting, NS):
         charelem.attrib['title'] = assemble_hocr_title_element(title_data)
         wordelem.append(charelem)
 
-        # TODO: Let properties for wordelem here as well
+        word_start = False
+
+    # If word if rtl, let's add <200e>
+    if 'dir' in wordelem.attrib and wordelem.attrib['dir'] == 'rtl':
+        wordelem[-1].text += chr(0x200e)
 
     _gather_word_data(pageno, wordelem, wordchar_bboxes, formatting)
 
