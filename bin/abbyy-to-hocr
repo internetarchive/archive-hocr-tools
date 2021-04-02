@@ -318,7 +318,13 @@ def abbyy_page_to_hocr_page(abbyy_page, schema, pageno=None):
             separatorelem.attrib['title'] = assemble_hocr_title_element(kv)
             separatorelem.attrib['id'] = get_id(pageno, 'separator')
             pageelem.append(separatorelem)
-
+        elif block.attrib['blockType'] == 'SeparatorsBox':
+            separatorelem = etree.Element('div', attrib={'class': 'ocr_separator'})
+            kv = {}
+            kv['bbox'] = [block.attrib['l'], block.attrib['t'], block.attrib['r'], block.attrib['b']]
+            separatorelem.attrib['title'] = assemble_hocr_title_element(kv)
+            separatorelem.attrib['id'] = get_id(pageno, 'separator')
+            pageelem.append(separatorelem)
         elif block.attrib['blockType'] == 'Text':
             kv = {}
             kv['bbox'] = [block.attrib['l'], block.attrib['t'], block.attrib['r'], block.attrib['b']]
