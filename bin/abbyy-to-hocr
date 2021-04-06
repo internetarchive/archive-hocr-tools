@@ -219,7 +219,10 @@ def abbyy_process_text_block(pageno, NS, block, parent_block):
 
             # Tesseract uses x_size, it's not spec compliant, but let's use it
             # anyway for now.
-            kv['x_size'] = formatting.attrib['fs'] # TODO: maybe need to adjust to dpi
+            if 'fs' in formatting.attrib:
+                # TODO: maybe need to adjust to dpi
+                kv['x_size'] = formatting.attrib['fs']
+
             #kv['x_fsize'] = str(int(float(formatting.attrib['fs']))) # TODO: maybe need to adjust to dpi
 
             last_wordelem, cboxes = abbyy_process_characters(pageno, NS, line, lineelem, formatting)
@@ -353,10 +356,11 @@ def _gather_word_data(pageno, wordelem, wordchar_bboxes, formatting):
 
     word_data = {'bbox': word_bbox,
                  'x_wconf': '100', # TODO - this is still tricky...
-                 # XXX: x_fsize has to be uint in hOCR, even though Abbyy
-                 # specifies it as float
-                 'x_fsize': str(int(float(formatting.attrib['fs'])))
                  }
+    if 'fs' in formatting.attrib:
+        # XXX: x_fsize has to be uint in hOCR, even though Abbyy
+        # specifies it as float
+        word_data['x_fsize'] = str(int(float(formatting.attrib['fs'])))
 
     wordelem.attrib['id'] = get_id(pageno, 'word')
     wordelem.attrib['title'] = \
