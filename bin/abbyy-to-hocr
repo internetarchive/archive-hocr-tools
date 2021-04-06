@@ -144,6 +144,8 @@ def abbyy_get_metadata(file_path):
             elem.clear()
             break
 
+    return None, None
+
 
 def abbyy_page_iterator(file_path, schema):
     """
@@ -521,6 +523,10 @@ def abbyy_process_characters(pageno, NS, line, lineelem, formatting):
 def process_files(filename):
     # TODO: Evaluate proper ocr-capabilities
     producer, schema = abbyy_get_metadata(filename)
+    if producer is None or schema is None:
+        print('Cannot identify Abbyy document version', file=sys.stderr)
+        sys.exit(1)
+
     print('''<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
 <html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
