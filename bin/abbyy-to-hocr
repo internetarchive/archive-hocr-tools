@@ -11,6 +11,10 @@ from hocr.util import open_if_required
 
 import numpy as np
 
+import pkg_resources
+import csv
+import io
+
 # TODO:
 # X Actually output hOCR
 # X wordFirst=1 for charParams
@@ -51,6 +55,19 @@ import numpy as np
 FINEREADER_6_SCHEMA = 'http://www.abbyy.com/FineReader_xml/FineReader6-schema-v1.xml'
 FINEREADER_11_SCHEMA = 'http://www.abbyy.com/FineReader_xml/FineReader10-schema-v1.xml'
 ABBYY_SCHEMAS = (FINEREADER_6_SCHEMA, FINEREADER_11_SCHEMA)
+
+LANG_DATA = None
+
+def load_langs():
+    global LANG_DATA
+
+    LANG_DATA = {}
+    data = pkg_resources.resource_string('hocr', 'data/abbyy-lang-map.csv')
+    langcsv = csv.DictReader(io.StringIO(data.decode('utf-8')))
+    for row in langcsv:
+        if row['code']:
+            LANG_DATA[row['abbyylang']] = row['code']
+
 
 
 # Functions related to unique id="" generation
@@ -187,8 +204,6 @@ def abbyy_process_text_block(pageno, NS, block, parent_block):
     for par in block.xpath('./x:text/x:par', namespaces={'x': NS}):
         parelem = etree.Element('p', attrib={'class': 'ocr_par'})
 
-        parelem.attrib['lang'] = 'TODO' # perhaps look at line and transform the <formatting lang="">
-        #parelem.attrib[xmlescape('xml:lang'] = 'TODO'
         parelem.attrib['id'] = get_id(pageno, 'par')
 
         leftm = None
@@ -216,6 +231,14 @@ def abbyy_process_text_block(pageno, NS, block, parent_block):
                 bottomm = max(bottom, bottomm)
 
             lineelem = etree.Element('span', attrib={'class': 'ocr_line'})
+
+            if 'lang' in formatting.attrib:
+                mapped_lang = LANG_DATA.get(formatting.attrib['lang'], None)
+                if not mapped_lang:
+                    raise Exception('Cannot map Abbyy language: %s', formatting.attrib['lang'])
+                lineelem.attrib['lang'] = mapped_lang
+                lineelem.attrib['{http://www.w3.org/XML/1998/namespace}lang'] = mapped_lang
+
             kv = {}
             kv['bbox'] = [line.attrib['l'], line.attrib['t'], line.attrib['r'], line.attrib['b']]
 
@@ -556,5 +579,6 @@ if __name__ == '__main__':
     parser.add_argument('-f', '--infile', help='Input file',
                         type=str, default=None)
     args = parser.parse_args()
+    load_langs()
 
     process_files(args.infile)
