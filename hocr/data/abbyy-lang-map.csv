@@ -65,12 +65,12 @@ Dargwa,dar,Dargwa
 Dungan,dng,Dungan
 Dutch,nld,Dutch
 DutchBelgian,,
-DutchStandard,,
-EnglishAustralian,,
+DutchStandard,nld,Dutch
+EnglishAustralian,eng,English
 EnglishBelize,,
-EnglishCanadian,,
+EnglishCanadian,eng,English
 EnglishCaribbean,,
-EnglishIreland,,
+EnglishIreland,eng,English
 EnglishJamaica,,
 EnglishLaw,,
 EnglishMedical,,
@@ -79,7 +79,7 @@ EnglishPhilippines,,
 EnglishProperNames,,
 EnglishSouthAfrica,,
 EnglishTrinidad,,
-EnglishUnitedKingdom,,
+EnglishUnitedKingdom,eng,English
 EnglishUnitedStates,eng,English
 EnglishZimbabwe,,
 EskimoCyrillic,,
@@ -94,14 +94,14 @@ Farsi,,
 Fijian,fij,Fijian
 Finnish,fin,Finnish
 Flemish,nld,Dutch
-FrenchBelgian,,
-FrenchCanadian,,
+FrenchBelgian,fra,French
+FrenchCanadian,fra,French
 FrenchLuxembourg,,
 FrenchMonaco,,
 FrenchProperNames,,
-FrenchStandard,,
+FrenchStandard,fra,French
 FrenchSwiss,,
-Frisian,,
+Frisian,fry,Western Frisian
 Frisian_Legacy,,
 Friulian,fur,Friulian
 Gaelic,gla,Scottish Gaelic
