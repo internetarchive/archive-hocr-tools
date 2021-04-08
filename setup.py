@@ -17,4 +17,6 @@ setup(name='hocr',
                'bin/fts-text-match', 'bin/hocr-lookup-check',
                'bin/hocr-lookup-create', 'bin/hocr-lookup-reconstruct',
                'bin/hocr-text-paragraphs', 'bin/hocr-extract-page',
-               'bin/abbyy-to-hocr'])
+               'bin/abbyy-to-hocr'],
+      include_package_data=True,
+      package_data={'hocr': ['data/*']})
