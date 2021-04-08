@@ -232,7 +232,7 @@ def abbyy_process_text_block(pageno, NS, block, parent_block):
 
             lineelem = etree.Element('span', attrib={'class': 'ocr_line'})
 
-            if 'lang' in formatting.attrib:
+            if 'lang' in formatting.attrib and formatting.attrib['lang'] != '':
                 mapped_lang = LANG_DATA.get(formatting.attrib['lang'], None)
                 if not mapped_lang:
                     raise Exception('Cannot map Abbyy language: %s', formatting.attrib['lang'])
