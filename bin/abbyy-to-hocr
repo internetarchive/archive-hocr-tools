@@ -264,10 +264,13 @@ def abbyy_process_text_block(pageno, NS, block, parent_block):
 
             parelem.append(lineelem)
 
-        kv = {'bbox': list(map(str, [leftm, topm, rightm, bottomm]))}
-        parelem.attrib['title'] = assemble_hocr_title_element(kv)
+        if leftm is None:
+            print('paragraph has no lines/boundingbox', file=sys.stderr)
+        else:
+            kv = {'bbox': list(map(str, [leftm, topm, rightm, bottomm]))}
+            parelem.attrib['title'] = assemble_hocr_title_element(kv)
+            parent_block.append(parelem)
 
-        parent_block.append(parelem)
 
 
 def abbyy_page_to_hocr_page(abbyy_page, schema, pageno=None):
@@ -507,7 +510,7 @@ def abbyy_process_characters(pageno, NS, line, lineelem, formatting):
             wordchar_bboxes.append(bbox)
             all_wordchar_bboxes.append(bbox)
         else:
-            print('empty bbox!', file=sys.stderr)
+            print('char has empty bbox', file=sys.stderr)
             bbox = None
 
         title_data = {}
