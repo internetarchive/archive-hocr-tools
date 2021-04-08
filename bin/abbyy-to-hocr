@@ -212,7 +212,14 @@ def abbyy_process_text_block(pageno, NS, block, parent_block):
         bottomm = None
 
         for line in par.xpath('./x:line', namespaces={'x': NS}):
-            formatting = line.getchildren()[0] # XXX: hacky
+            children = line.getchildren()
+
+            if len(children) < 1:
+                # If the line has no children, it does not have a formatting
+                # element and seems to be always empty, so let's skip it.
+                continue
+
+            formatting = children[0] # XXX: hacky
 
             char_boxes = []
             left = int(line.attrib['l'])
