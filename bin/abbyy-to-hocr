@@ -251,16 +251,18 @@ def abbyy_process_text_block(pageno, NS, block, parent_block):
             #kv['x_fsize'] = str(int(float(formatting.attrib['fs']))) # TODO: maybe need to adjust to dpi
 
             last_wordelem, cboxes = abbyy_process_characters(pageno, NS, line, lineelem, formatting)
-            char_boxes += cboxes
-
-            m, c = abbyy_baseline_from_charboxes(char_boxes)
-            kv['baseline'] = '%f %d' % (m, c)
-
-            lineelem.attrib['title'] = assemble_hocr_title_element(kv)
-            lineelem.attrib['id'] = get_id(pageno, 'line')
-
+            # We want to at least find a word, otherwise, discard
             if last_wordelem is not None:
-                lineelem.append(last_wordelem)
+                char_boxes += cboxes
+
+                m, c = abbyy_baseline_from_charboxes(char_boxes)
+                kv['baseline'] = '%f %d' % (m, c)
+
+                lineelem.attrib['title'] = assemble_hocr_title_element(kv)
+                lineelem.attrib['id'] = get_id(pageno, 'line')
+
+                if last_wordelem is not None:
+                    lineelem.append(last_wordelem)
 
             parelem.append(lineelem)
 
@@ -451,12 +453,19 @@ def abbyy_process_characters(pageno, NS, line, lineelem, formatting):
     bounding boxes of the characters encountered.
     """
     wordelem = etree.Element('span', attrib={'class': 'ocrx_word'})
+    charelem = None
     first_word = True
     word_start = True
 
     wordchar_bboxes = []
     all_wordchar_bboxes = []
     for char in line.xpath('./x:formatting/x:charParams', namespaces={'x': NS}):
+        # Abbyy sometimes has charParams without a character, let's just ignore
+        # those all together (and hope they don't mess up our
+        # wordFirst/wordStart etc detection)
+        if char.text is None:
+            continue
+
         # wordFirst for 11, wordStart for 6, 8, 9
         if 'wordFirst' in char.attrib and char.attrib['wordFirst'] == '1' or \
            'wordStart' in char.attrib and char.attrib['wordStart'] == 'true':
@@ -486,7 +495,6 @@ def abbyy_process_characters(pageno, NS, line, lineelem, formatting):
                 wordelem.attrib['dir'] = 'ltr'
             else:
                 wordelem.attrib['dir'] = 'rtl'
-
 
         charelem = etree.Element('span', attrib={'class': 'ocrx_cinfo'})
         charelem.text = char.text
@@ -541,9 +549,13 @@ def abbyy_process_characters(pageno, NS, line, lineelem, formatting):
     if 'dir' in wordelem.attrib and wordelem.attrib['dir'] == 'rtl':
         wordelem[-1].text += chr(0x200e)
 
-    _gather_word_data(pageno, wordelem, wordchar_bboxes, formatting)
+    # Sometimes we find no legit chars in a word, in which case charelem is None
+    if charelem is not None:
+        _gather_word_data(pageno, wordelem, wordchar_bboxes, formatting)
 
-    return wordelem, all_wordchar_bboxes
+        return wordelem, all_wordchar_bboxes
+
+    return None, None
 
 
 def process_files(filename):
