@@ -82,6 +82,7 @@ EnglishTrinidad,,
 EnglishUnitedKingdom,eng,English
 EnglishUnitedStates,eng,English
 EnglishZimbabwe,,
+English,eng,English
 EskimoCyrillic,,
 EskimoLatin,,
 Esperanto,epo,Esperanto
@@ -121,7 +122,7 @@ GermanNewSpellingLaw,,
 GermanNewSpellingMedical,,
 GermanNewSpellingProperNames,,
 GermanProperNames,,
-GermanStandard,,
+GermanStandard,deu,German
 GermanSwiss,,
 GreekKathareusa,,
 Greenlandic,kal,Kalaallisut
@@ -142,7 +143,7 @@ Interlingua,,
 Irish,gle,Irish
 Irish_Legacy,,
 ItalianProperNames,,
-ItalianStandard,,
+ItalianStandard,ita,Italian
 ItalianSwiss,,
 Japanese,jpn,Japanese
 Kabardian,kbd,Kabardian
@@ -173,6 +174,7 @@ KurdishCyrillic,,
 Lak,lbe,Lak
 Lappish,,
 Latin_Legacy,,
+Latin,lat,Latin
 Latvian,lav,Latvian
 LatvianGothic,,
 Lezgin,,
@@ -239,7 +241,7 @@ Ruanda,,
 Rundi,run,Rundi
 Russian,rus,Russian
 RussianMoldavia,,
-RussianOldSpelling,,
+RussianOldSpelling,rus,Russian
 RussianProperNames,,
 Saami,,
 Samoan,smo,Samoan
@@ -274,7 +276,7 @@ SpanishParaguay,,
 SpanishPeru,,
 SpanishProperNames,,
 SpanishPuertoRico,,
-SpanishTraditionalSort,,
+SpanishTraditionalSort,spa,Spanish
 SpanishUruguay,,
 SpanishVenezuela,,
 Sunda,,
