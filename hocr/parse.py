@@ -16,7 +16,7 @@ wdmap = {
     'rtl': WRITING_DIRECTION_RIGHT_TO_LEFT,
 }
 
-BBOX_REGEX = re.compile(r'bbox((\s+\d+){4})')
+BBOX_REGEX = re.compile(r'bbox((\s+-?\d+){4})')
 PPI_REGEX = re.compile(r'scan_res((\s+\d+){2})')
 BASELINE_REGEX = re.compile(r'baseline((\s+[\d\.\-]+){2})')
 X_WCONF_REGEX = re.compile(r'x_wconf((\s+[\d\.\-]+){1})')
