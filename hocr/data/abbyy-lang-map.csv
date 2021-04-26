@@ -45,11 +45,11 @@ Catalan,cat,Catalan
 Chamorro,cha,Chamorro
 Chechen,che,Chechen
 Chinese,zho,Chinese
-ChineseHongKong,,
-ChineseMacau,,
+ChineseHongKong,zho,Chinese
+ChineseMacau,zho,Chinese
 ChinesePRC,,
-ChineseSingapore,,
-ChineseTaiwan,,
+ChineseSingapore,zho,Chinese
+ChineseTaiwan,zho,Chinese
 Chuana,,
 Chukcha,,
 Chuvash,chv,Chuvash
@@ -106,7 +106,7 @@ Frisian,fry,Western Frisian
 Frisian_Legacy,,
 Friulian,fur,Friulian
 Gaelic,gla,Scottish Gaelic
-GaelicScottish,,
+GaelicScottish,gla,Scottish Gaelic
 Gaelic_Legacy,,
 Gagauz,gag,Gagauz
 Galician,glg,Galician
@@ -207,8 +207,8 @@ NepaliIndia,,
 Nivkh,,
 Nogay,,
 Norwegian,nor,Norwegian
-NorwegianBokmal,,
-NorwegianNynorsk,,
+NorwegianBokmal,nob,Norwegian Bokmål
+NorwegianNynorsk,nno,Norwegian Nynorsk
 Nyanja,nya,Nyanja
 Occidental,ile,Interlingue
 Ojibway,,
@@ -279,9 +279,10 @@ SpanishPuertoRico,,
 SpanishTraditionalSort,spa,Spanish
 SpanishUruguay,,
 SpanishVenezuela,,
+Spanish,spa,Spanish
 Sunda,,
 Sutu,,
-Swahili,,
+Swahili,swa,Swahili (macrolanguage)
 Swazi,,
 Swedish,swe,Swedish
 SwedishFinland,,
