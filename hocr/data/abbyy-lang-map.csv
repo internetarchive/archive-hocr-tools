@@ -1,14 +1,14 @@
 abbyylang,code,isoname
-Abazin,,
-Abkhaz,,
+Abazin,abq,Abaza
+Abkhaz,abk,Abkhazian
 Adyghe,ady,Adyghe
 Afrikaans,afr,Afrikaans
-Agul,,
+Agul,agx,Aghul
 Albanian,sqi,Albanian
 Altaic,,
-ArabicAlgeria,,
-ArabicBahrain,,
-ArabicEgypt,,
+ArabicAlgeria,arq,Algerian Arabic
+ArabicBahrain,afb,Gulf Arabic
+ArabicEgypt,arz,Egyptian Arabic
 ArabicIraq,,
 ArabicJordan,,
 ArabicKuwait,,
@@ -33,14 +33,14 @@ AzeriLatin,,
 Bashkir,bak,Bashkir
 Basque,eus,Basque
 Belarusian,bel,Belarusian
-Bemba,,
-Blackfoot,,
+Bemba,bem,Bemba (Zambia)
+Blackfoot,bla,Siksika
 Breton,bre,Breton
-Bugotu,,
+Bugotu,bgt,Bughotu
 Bulgarian,bul,Bulgarian
 Burmese,mya,Burmese
-Buryat,,
-Byelorussian,,
+Buryat,bua,Buriat
+Byelorussian,bel,Belarusian
 Catalan,cat,Catalan
 Chamorro,cha,Chamorro
 Chechen,che,Chechen
@@ -51,37 +51,37 @@ ChinesePRC,zho,Chinese
 ChineseSingapore,zho,Chinese
 ChineseTaiwan,zho,Chinese
 Chuana,,
-Chukcha,,
+Chukcha,ckt,Chukot
 Chuvash,chv,Chuvash
 Corsican,cos,Corsican
-CrimeanTatar,,
+CrimeanTatar,crh,Crimean Tatar
 Croatian,hrv,Croatian
 Crow,cro,Crow
 Czech,ces,Czech
 Dakota,dak,Dakota
 Danish,dan,Danish
-Dargin,,
+Dargin,dar,Dargwa
 Dargwa,dar,Dargwa
 Dungan,dng,Dungan
 Dutch,nld,Dutch
 DutchBelgian,nld,Dutch
 DutchStandard,nld,Dutch
 EnglishAustralian,eng,English
-EnglishBelize,,
+EnglishBelize,eng,English
 EnglishCanadian,eng,English
-EnglishCaribbean,,
+EnglishCaribbean,eng,English
 EnglishIreland,eng,English
-EnglishJamaica,,
+EnglishJamaica,jam,Jamaican Creole English
 EnglishLaw,,
 EnglishMedical,,
 EnglishNewZealand,,
-EnglishPhilippines,,
+EnglishPhilippines,eng,English
 EnglishProperNames,,
-EnglishSouthAfrica,,
-EnglishTrinidad,,
+EnglishSouthAfrica,eng,English
+EnglishTrinidad,eng,English
 EnglishUnitedKingdom,eng,English
 EnglishUnitedStates,eng,English
-EnglishZimbabwe,,
+EnglishZimbabwe,eng,English
 English,eng,English
 EskimoCyrillic,,
 EskimoLatin,,
@@ -89,20 +89,20 @@ Esperanto,epo,Esperanto
 Estonian,est,Estonian
 Even,eve,Even
 Evenki,evn,Evenki
-Faeroese,,
+Faeroese,fao,Faroese
 Faroese,fao,Faroese
-Farsi,,
+Farsi,fas,Persian
 Fijian,fij,Fijian
 Finnish,fin,Finnish
 Flemish,nld,Dutch
 French,fra,French
 FrenchBelgian,fra,French
 FrenchCanadian,fra,French
-FrenchLuxembourg,,
+FrenchLuxembourg,fra,French
 FrenchMonaco,,
 FrenchProperNames,,
 FrenchStandard,fra,French
-FrenchSwiss,,
+FrenchSwiss,fra,French
 Frisian,fry,Western Frisian
 Frisian_Legacy,,
 Friulian,fur,Friulian
@@ -154,20 +154,20 @@ Kabardian,kbd,Kabardian
 Kachin,kac,Kachin
 Kalmyk,xal,Kalmyk
 KarachayBalkar,,
-Karakalpak,,
+Karakalpak,kaa,Kara-Kalpak
 Kashmiri,kas,Kashmiri
 KashmiriIndia,,
-Kasub,,
-Kawa,,
+Kasub,csb,Kashubian
+Kawa,ckq,Kajakse
 Kazakh,kaz,Kazakh
 Khakas,kjh,Khakas
 Khanty,kca,Khanty
 Kikuyu,kik,Kikuyu
-Kirgiz,,
-KomiPermian,,
-KomiZyryan,,
+Kirgiz,kir,Kirghiz
+KomiPermian,koi,Komi-Permyak
+KomiZyryan,kpv,Komi-Zyrian
 Kongo,kon,Kongo
-Konkani,,
+Konkani,kok,Konkani (macrolanguage)
 Korean,kor,Korean
 KoreanJohab,,
 Koryak,kpy,Koryak
@@ -181,25 +181,25 @@ Latin_Legacy,,
 Latin,lat,Latin
 Latvian,lav,Latvian
 LatvianGothic,,
-Lezgin,,
+Lezgin,lez,Lezghian
 Lithuanian,lit,Lithuanian
 LithuanianClassic,,
-Luba,,
+Luba,lua,Luba-Lulua
 Macedonian,mkd,Macedonian
 Malagasy,mlg,Malagasy
-Malay,,
-MalayBruneiDarussalam,,
-MalayMalaysian,,
+Malay,msa,Malay (macrolanguage)
+MalayBruneiDarussalam,kxd,Brunei
+MalayMalaysian,zlm,Malay (individual language)
 Malinke,,
 Maltese,mlt,Maltese
 Manipuri,mni,Manipuri
 Mansi,mns,Mansi
 Maori,mri,Maori
 Marathi,mar,Marathi
-Mari,,
+Mari,chm,Mari (Russia)
 Maya,,
 Miao,,
-Minankabaw,,
+Minankabaw,min,Minangkabau
 Mohawk,moh,Mohawk
 Mongol,mgt,Mongol
 Mordvin,,
@@ -208,14 +208,14 @@ Nanai,gld,Nanai
 Nenets,yrk,Nenets
 Nepali,,
 NepaliIndia,,
-Nivkh,,
-Nogay,,
+Nivkh,niv,Gilyak
+Nogay,nog,Nogai
 Norwegian,nor,Norwegian
 NorwegianBokmal,nob,Norwegian Bokmål
 NorwegianNynorsk,nno,Norwegian Nynorsk
 Nyanja,nya,Nyanja
 Occidental,ile,Interlingue
-Ojibway,,
+Ojibway,oji,Ojibwa
 OldEnglish,,
 OldFrench,,
 OldGerman,,
@@ -255,12 +255,12 @@ SerbianCyrillic,,
 SerbianLatin,,
 Shona,sna,Shona
 Sindhi,snd,Sindhi
-Sioux,,
+Sioux,dak,Dakota
 Slovak,slk,Slovak
 Slovenian,slv,Slovenian
 Somali,som,Somali
 Somali_Legacy,,
-Sorbian,,
+Sorbian,wen,Sorbian languages
 Sotho,,
 SpanishArgentina,,
 SpanishBolivia,,
@@ -284,10 +284,10 @@ SpanishTraditionalSort,spa,Spanish
 SpanishUruguay,,
 SpanishVenezuela,,
 Spanish,spa,Spanish
-Sunda,,
+Sunda,sun,Sundanese
 Sutu,,
 Swahili,swa,Swahili (macrolanguage)
-Swazi,,
+Swazi,ssw,Swati
 Swedish,swe,Swedish
 SwedishFinland,,
 Tabassaran,tab,Tabassaran
@@ -295,17 +295,17 @@ Tagalog,tgl,Tagalog
 Tahitian,tah,Tahitian
 Tajik,tgk,Tajik
 Tajik_Legacy,,
-Tibet,,
+Tibet,bod,Tibetan
 Tinpo,,
-Tongan,,
+Tongan,ton,Tonga (Tonga Islands)
 Tsonga,tso,Tsonga
 Tswana,tsn,Tswana
-Tun,,
+Tun,tun,Tunica
 Turkish,tur,Turkish
 Turkmen,tuk,Turkmen
 TurkmenLatin,,
 Turkmen_Legacy,,
-Tuvin,,
+Tuvin,tyv,Tuvinian
 Udmurt,udm,Udmurt
 Uighur,uig,Uighur
 UighurCyrillic,,
