@@ -22,9 +22,9 @@ ArabicSyria,,
 ArabicTunisia,,
 ArabicUAE,,
 ArabicYemen,,
-ArmenianEastern,,
-ArmenianGrabar,,
-ArmenianWestern,,
+ArmenianEastern,hye,Armenian
+ArmenianGrabar,xcl,Classical Armenian
+ArmenianWestern,hyw,Western Armenian
 Assamese,asm,Assamese
 Awar,aya,Awar
 Aymara,aym,Aymara
@@ -228,8 +228,8 @@ Papiamento_Legacy,,
 PidginEnglish,,
 Pinyin,pny,Pinyin
 Polish,pol,Polish
-PortugueseBrazilian,,
-PortugueseStandard,,
+PortugueseBrazilian,por,Portuguese
+PortugueseStandard,por,Portuguese
 Provencal,,
 Punjabi,pan,Panjabi
 Quechua,que,Quechua
