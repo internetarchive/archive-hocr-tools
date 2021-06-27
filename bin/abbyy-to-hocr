@@ -382,7 +382,41 @@ def abbyy_page_to_hocr_page(abbyy_page, schema, pageno=None):
     return pageelem
 
 
-def _gather_word_data(pageno, wordelem, wordchar_bboxes, formatting):
+def _gather_word_confidence(wordchar_confs, wordchar_suspicious, word_dict):
+    """
+    Calculate word confidence based on the character confidence values,
+    "suspicious" characters and whether words are part of a dictionary or not.
+
+    Other code dealing with Abbyy files would solely reject a document is it
+    contained more than a certain percentage of "suspicious" characters. Since
+    we also care about word confidence, we take the average character
+    confidence, and apply additional penalties in case there are suspicious
+    characters, or the word was not part of a word dictionary.
+
+    Returns the confidence as float (between 0 and 100)
+    """
+    any_suspicious = any(wordchar_suspicious)
+    suspicious_perc = sum(map(int, wordchar_suspicious)) / len(wordchar_suspicious)
+
+    confs = list(filter(lambda x: x is not None, wordchar_confs))
+
+    confs_notnone = len(confs)
+    confs_none = len(wordchar_confs) - len(confs)
+
+    avg_char_conf = sum(confs) / len(confs)
+
+    conf = avg_char_conf
+
+    if not word_dict:
+        conf = ((conf / 100) ** 2) * 100
+
+    if any_suspicious:
+        conf *= (1 - (suspicious_perc ** 2))
+
+    return conf
+
+
+def _gather_word_data(pageno, wordelem, wordchar_bboxes, wordchar_confs, wordchar_suspicious, word_dict, formatting):
     # Turn these calculations into a function
     word_bbox = [
         str(min(x[0] for x in wordchar_bboxes)),
@@ -391,8 +425,10 @@ def _gather_word_data(pageno, wordelem, wordchar_bboxes, formatting):
         str(max(x[3] for x in wordchar_bboxes)),
     ]
 
+    wconf = _gather_word_confidence(wordchar_confs, wordchar_suspicious, word_dict)
+
     word_data = {'bbox': word_bbox,
-                 'x_wconf': '100', # TODO - this is still tricky...
+                 'x_wconf': str(int(wconf)),
                  }
     if 'fs' in formatting.attrib:
         # XXX: x_fsize has to be uint in hOCR, even though Abbyy
@@ -463,8 +499,11 @@ def abbyy_process_characters(pageno, NS, line, lineelem, formatting):
     charelem = None
     first_word = True
     word_start = True
+    word_dict = False
 
     wordchar_bboxes = []
+    wordchar_confs = []
+    wordchar_suspicious = []
     all_wordchar_bboxes = []
     for char in line.xpath('./x:formatting/x:charParams', namespaces={'x': NS}):
         # Abbyy sometimes has charParams without a character, let's just ignore
@@ -477,6 +516,8 @@ def abbyy_process_characters(pageno, NS, line, lineelem, formatting):
         if 'wordFirst' in char.attrib and char.attrib['wordFirst'] == '1' or \
            'wordStart' in char.attrib and char.attrib['wordStart'] == 'true':
 
+            word_dict = 'wordFromDictionary' in char.attrib and char.attrib['wordFromDictionary'] == '1'
+
             if first_word:
                 first_word = False
             else:
@@ -485,13 +526,17 @@ def abbyy_process_characters(pageno, NS, line, lineelem, formatting):
                     if 'dir' in wordelem.attrib and wordelem.attrib['dir'] == 'rtl':
                         wordelem[-1].text += chr(0x200e)
 
-                    _gather_word_data(pageno, wordelem, wordchar_bboxes, formatting)
+                    _gather_word_data(pageno, wordelem, wordchar_bboxes,
+                            wordchar_confs, wordchar_suspicious, word_dict,
+                            formatting)
 
                 wordelem = etree.Element('span',
                                          attrib={'class': 'ocrx_word'})
 
             word_start = True
             wordchar_bboxes = []
+            wordchar_confs = []
+            wordchar_suspicious = []
 
         # Check if the first character has wordLeftMost="1" set, otherwise,
         # assuming right-to-left
@@ -514,7 +559,7 @@ def abbyy_process_characters(pageno, NS, line, lineelem, formatting):
         if 'suspicious' in char.attrib:
             suspicious = char.attrib['suspicious'] == 'true'
         else:
-            suspicious = None
+            suspicious = False
 
         if 'l' in char.attrib and 't' in char.attrib \
                 and 'r' in char.attrib and 'b' in char.attrib:
@@ -547,6 +592,9 @@ def abbyy_process_characters(pageno, NS, line, lineelem, formatting):
 
             title_data['x_confs'] = str(conf)
 
+        wordchar_suspicious.append(suspicious)
+        wordchar_confs.append(conf)
+
         charelem.attrib['title'] = assemble_hocr_title_element(title_data)
         wordelem.append(charelem)
 
@@ -558,7 +606,8 @@ def abbyy_process_characters(pageno, NS, line, lineelem, formatting):
 
     # Sometimes we find no legit chars in a word, in which case charelem is None
     if charelem is not None:
-        _gather_word_data(pageno, wordelem, wordchar_bboxes, formatting)
+        _gather_word_data(pageno, wordelem, wordchar_bboxes, wordchar_confs,
+                wordchar_suspicious, word_dict, formatting)
 
         return wordelem, all_wordchar_bboxes
 
