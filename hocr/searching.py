@@ -105,7 +105,7 @@ def hocr_load_lookup_table(path):
     * Lookup table
     """
     fp = open_if_required(path)
-    return json.load(fp)
+    return json.loads(fp.read().decode('utf-8'))
 
 
 def hocr_save_lookup_table(lookup_table, fd_or_path):
