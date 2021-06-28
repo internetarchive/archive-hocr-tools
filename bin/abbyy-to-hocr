@@ -411,7 +411,7 @@ def _gather_word_confidence(wordchar_confs, wordchar_suspicious, word_dict):
         conf = ((conf / 100) ** 2) * 100
 
     if any_suspicious:
-        conf *= (1 - (suspicious_perc ** 2))
+        conf *= (1 - suspicious_perc) ** 2
 
     return conf
 
@@ -581,19 +581,24 @@ def abbyy_process_characters(pageno, NS, line, lineelem, formatting):
             if conf < 0:
                 conf = 0.
 
-            if suspicious:
-                conf = 0.
-
             if conf == 255.:
                 conf = 0. # TODO: or None?
+
+            # We store this before we set it to 0 in case the character is
+            # suspicious, for usage in word confidence calculation
+            wordchar_confs.append(conf)
+
+            if suspicious:
+                conf = 0.
 
             if conf > 100:
                 raise ValueError('Invalid character confidence (>100): %f', conf)
 
             title_data['x_confs'] = str(conf)
+        else:
+            wordchar_confs.append(conf)
 
         wordchar_suspicious.append(suspicious)
-        wordchar_confs.append(conf)
 
         charelem.attrib['title'] = assemble_hocr_title_element(title_data)
         wordelem.append(charelem)
