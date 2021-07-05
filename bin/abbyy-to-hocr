@@ -414,6 +414,14 @@ def _gather_word_confidence(wordchar_confs, wordchar_suspicious, word_dict):
     confs_notnone = len(confs)
     confs_none = len(wordchar_confs) - len(confs)
 
+    # No confidence provided means the word will be marked as max confidence.
+    # Otherwise any other systems processing the document will probably just
+    # discard it. (In our case: folks are uploading Abbyy files from Google
+    # Cloud Vision but converting the results to a subset of Abbyy without
+    # character confidence values).
+    if len(confs) == 0:
+        return 100
+
     avg_char_conf = sum(confs) / len(confs)
 
     conf = avg_char_conf
