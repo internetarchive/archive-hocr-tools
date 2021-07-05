@@ -254,10 +254,11 @@ def abbyy_process_text_block(pageno, NS, block, parent_block, dpi):
             # anyway for now. We can switch to x_fsize later when our stack
             # supports it (as well)
             line_height = abs(int(line.attrib['b']) - int(line.attrib['t']))
+
             if 'fs' in formatting.attrib:
                 # x_size is dpi independent, x_fsize is dpi dependent
-                kv['x_size'] = str(int(formatting.attrib['fs']) * (dpi / 72.))
-                kv['x_fsize'] = formatting.attrib['fs']
+                kv['x_size'] = str(int(float(formatting.attrib['fs']) * (dpi / 72.)))
+                kv['x_fsize'] = str(int(float(formatting.attrib['fs'])))
             else:
                 # estimate x_size based on line height
                 kv['x_size'] = str(line_height)
