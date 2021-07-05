@@ -187,7 +187,7 @@ def abbyy_page_iterator(file_path, schema):
         elem.clear()
 
 
-def abbyy_process_text_block(pageno, NS, block, parent_block):
+def abbyy_process_text_block(pageno, NS, block, parent_block, dpi):
     """
     Process a <text> block.
 
@@ -196,6 +196,7 @@ def abbyy_process_text_block(pageno, NS, block, parent_block):
     * NS (str): namespace of this XML as returned by abbyy_get_metadata
     * block (etree.Element): Abbyy XML block to process
     * parent_block (etree.Element): parent (target) element to add elements to.
+    * dpi (int): DPI/PPI of the page
     """
     # TODO: check writing direction correctness (do we want it per paragraph,
     # too?) - and then only report on the different writing directions per word
@@ -250,14 +251,24 @@ def abbyy_process_text_block(pageno, NS, block, parent_block):
             kv['bbox'] = [line.attrib['l'], line.attrib['t'], line.attrib['r'], line.attrib['b']]
 
             # Tesseract uses x_size, it's not spec compliant, but let's use it
-            # anyway for now.
+            # anyway for now. We can switch to x_fsize later when our stack
+            # supports it (as well)
+            line_height = abs(int(line.attrib['b']) - int(line.attrib['t']))
             if 'fs' in formatting.attrib:
-                # TODO: maybe need to adjust to dpi
-                kv['x_size'] = formatting.attrib['fs']
+                # x_size is dpi independent, x_fsize is dpi dependent
+                kv['x_size'] = str(int(formatting.attrib['fs']) * (dpi / 72.))
+                kv['x_fsize'] = formatting.attrib['fs']
+            else:
+                # estimate x_size based on line height
+                kv['x_size'] = str(line_height)
+                kv['x_fsize'] = str(int((72. / dpi) * line_height))
 
-            #kv['x_fsize'] = str(int(float(formatting.attrib['fs']))) # TODO: maybe need to adjust to dpi
 
-            last_wordelem, cboxes = abbyy_process_characters(pageno, NS, line, lineelem, formatting)
+            # Calculate font size here (based on x_size, or a guessed x_size)
+            # and set this per word
+            line_fontsize = int(kv['x_fsize'])
+
+            last_wordelem, cboxes = abbyy_process_characters(pageno, NS, line, lineelem, formatting, line_fontsize)
             # We want to at least find a word, otherwise, discard
             if last_wordelem is not None:
                 char_boxes += cboxes
@@ -346,7 +357,7 @@ def abbyy_page_to_hocr_page(abbyy_page, schema, pageno=None):
                 rowelem = etree.Element('tr')
                 for cell in row.xpath('./x:cell', namespaces={'x': NS}):
                     cellelem = etree.Element('td')
-                    abbyy_process_text_block(pageno, NS, cell, cellelem)
+                    abbyy_process_text_block(pageno, NS, cell, cellelem, dpi)
                     rowelem.append(cellelem)
 
                 tableelem.append(rowelem)
@@ -372,7 +383,7 @@ def abbyy_page_to_hocr_page(abbyy_page, schema, pageno=None):
             blockelem.attrib['title'] = assemble_hocr_title_element(kv)
             blockelem.attrib['id'] = get_id(pageno, 'block')
 
-            abbyy_process_text_block(pageno, NS, block, blockelem)
+            abbyy_process_text_block(pageno, NS, block, blockelem, dpi)
             pageelem.append(blockelem)
         else:
             # Let's error for now on other blockTypes
@@ -416,7 +427,7 @@ def _gather_word_confidence(wordchar_confs, wordchar_suspicious, word_dict):
     return conf
 
 
-def _gather_word_data(pageno, wordelem, wordchar_bboxes, wordchar_confs, wordchar_suspicious, word_dict, formatting):
+def _gather_word_data(pageno, wordelem, wordchar_bboxes, wordchar_confs, wordchar_suspicious, word_dict, formatting, line_fontsize):
     # Turn these calculations into a function
     word_bbox = [
         str(min(x[0] for x in wordchar_bboxes)),
@@ -434,6 +445,8 @@ def _gather_word_data(pageno, wordelem, wordchar_bboxes, wordchar_confs, wordcha
         # XXX: x_fsize has to be uint in hOCR, even though Abbyy
         # specifies it as float
         word_data['x_fsize'] = str(int(float(formatting.attrib['fs'])))
+    else:
+        word_data['x_fsize'] = str(line_fontsize)
 
     wordelem.attrib['id'] = get_id(pageno, 'word')
     wordelem.attrib['title'] = \
@@ -478,7 +491,7 @@ def abbyy_baseline_from_charboxes(charboxes):
     return float(m), int(c)
 
 
-def abbyy_process_characters(pageno, NS, line, lineelem, formatting):
+def abbyy_process_characters(pageno, NS, line, lineelem, formatting, line_fontsize):
     """
     Process characters in a <line> element
 
@@ -489,6 +502,7 @@ def abbyy_process_characters(pageno, NS, line, lineelem, formatting):
     * line (etree.Element): line element to process
     * lineelem (etree.Element): target element
     * formatting (etree.Element): <formatting> element of the line
+    * line_fontsize (int): font size of the line
 
     Returns:
 
@@ -528,7 +542,7 @@ def abbyy_process_characters(pageno, NS, line, lineelem, formatting):
 
                     _gather_word_data(pageno, wordelem, wordchar_bboxes,
                             wordchar_confs, wordchar_suspicious, word_dict,
-                            formatting)
+                            formatting, line_fontsize)
 
                 wordelem = etree.Element('span',
                                          attrib={'class': 'ocrx_word'})
@@ -612,7 +626,7 @@ def abbyy_process_characters(pageno, NS, line, lineelem, formatting):
     # Sometimes we find no legit chars in a word, in which case charelem is None
     if charelem is not None:
         _gather_word_data(pageno, wordelem, wordchar_bboxes, wordchar_confs,
-                wordchar_suspicious, word_dict, formatting)
+                wordchar_suspicious, word_dict, formatting, line_fontsize)
 
         return wordelem, all_wordchar_bboxes
 
