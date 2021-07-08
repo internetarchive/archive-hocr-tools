@@ -21,18 +21,18 @@ import io
 # X charConfidence for charParams
 # X character bounding box
 # X line baseline; maybe just calculate optimal line given char bounding boxes
-# -- least squares (!) then (convert to hocr, test with pdf tooling)
+# X least squares (!) then (convert to hocr, test with pdf tooling)
 # X block (blockType="Text") bounding box
-# - Language mapping? (formatting lang="")
+# X Language mapping? (formatting lang="")
 # X Parse exact abbyy software version, other attributes, move those to hOCR files
 # / Test with different abbyy xml versions
 # X Test with unicode languages - also for writing direction and such -> maybe charParams.wordLeftMost can be used (if the first char is not wordLeftMost...)
 # X use <line fs="8.5" ...> (etc) for x_fsize for words?
-# - ocr_page image property - point to the zipview for convenient? or just some
-#   tmp path like Tesseract does?
-# - Add lots of (strict) assertions to prevent silent bugs (unknown areas/types, etc)
 # X Add scan_res (from image or item metadata? meh)
-# - word confidence wordFromDictionary (?) + char confs?, 'suspicious' attribute
+# X word confidence wordFromDictionary (?) + char confs?, 'suspicious' attribute
+# - Add lots of (strict) assertions to prevent silent bugs (unknown areas/types, etc)
+# - ocr_page image property - point to the some url for convience (where do we
+#   get it from?)
 
 # Tested versions:
 #
