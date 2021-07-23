@@ -1,0 +1,138 @@
+#!/usr/bin/env python
+
+import sys
+import argparse
+
+#from hocr.parse import hocr_page_iterator
+import hocr.parse
+from ebooklib import epub
+
+confidence_total = 0
+words_total = 0
+
+__version__ = '0.0.1'
+
+front_matter = (
+    '<div class="offset">'
+    '<p dir="ltr">This book was produced in EPUB format by the '
+    'Internet Archive.</p> '
+    '<p dir="ltr">The book pages were scanned and converted to EPUB '
+    'format automatically. This process relies on optical character '
+    'recognition, and is somewhat susceptible to errors. The book may '
+    'not offer the correct reading sequence, and there may be '
+    'weird characters, non-words, and incorrect guesses at '
+    'structure. Some page numbers and headers or footers may remain '
+    'from the scanned page. The process which identifies images might '
+    'have found stray marks on the page which are not actually images '
+    'from the book. The hidden page numbering which may be available '
+    'to your ereader corresponds to the numbered pages in the print '
+    'edition, but is not an exact match;  page numbers will increment '
+    'at the same rate as the corresponding print edition, but we may '
+    'have started numbering before the print book\'s visible page '
+    'numbers.  The Internet Archive is working to improve the '
+    'scanning process and resulting books, but in the meantime, we '
+    'hope that this book will be useful to you.</p> '
+    '<p dir="ltr">The Internet Archive was founded in 1996 to build '
+    'an Internet library and to promote universal access to all '
+    'knowledge. The Archive\'s purposes include offering permanent '
+    'access for researchers, historians, scholars, people with '
+    'disabilities, and ' 'the general public to historical '
+    'collections that exist in digital format. The Internet Archive '
+    'includes texts, audio, moving images, '
+    'and software as well as archived web pages, and provides '
+    'specialized services for information access for the blind and '
+    'other persons with disabilities.</p>'
+    '<p>Created with hocr-to-epub (v.%s)</p></div>'
+) % __version__
+
+# define CSS style
+style = """
+    .center {text-align: center}
+    .sr-only {
+        width: 1px;
+        height: 1px;
+        padding: 0;
+        margin: -1px;
+        overflow: hidden;
+        clip: rect(0,0,0,0);
+        border: 0;
+    }
+    .strong {font-weight: bold;}
+    .italic {font-style: italic;}
+    .serif {font-family: serif;}
+    .sans {font-family: sans-serif;}
+    .big {font-size: 1.5em;}
+    .small {font-size: .75em;}
+    .offset {
+        margin: 1em;
+        padding: 1.5em;
+        border: black 1px solid;
+    }
+    img {
+        padding: 0;
+        margin: 0;
+        max-width: 100%;
+        max-height: 100%;
+        column-count: 1;
+        break-inside: avoid;
+        oeb-column-number: 1;
+    }
+    """
+
+strip_whitespaces = True
+
+def process_files(filename):
+    book = epub.EpubBook()
+    book.set_identifier("Test")
+    book.set_title('Placeholder Title')
+    book.set_language('en')
+    book.add_author('Placeholder Author')
+
+    css_file = epub.EpubItem(
+        uid="style_nav",
+        file_name="style/style.css",
+        media_type="text/css",
+        content=style
+    )
+    book.add_item(css_file)
+
+    front_matter_epub = epub.EpubHtml(title='Notice', file_name='notice.html', lang='en')
+    front_matter_epub.set_content(front_matter)
+
+    pages_hocr = hocr.parse.hocr_page_iterator(filename)
+    pages_epub = []
+    pages_epub.append(front_matter_epub)
+    for idx, page in enumerate(pages_hocr):
+        dim = hocr.parse.hocr_page_get_dimensions(page)
+        word_data = hocr.parse.hocr_page_to_word_data(page)
+        page_content = []
+        for element in word_data:
+            for line in element['lines']:
+                for word in line['words']:
+                    text = word['text']
+                    if strip_whitespaces:
+                        text = text.strip()
+                    page_content.append(text)
+        page_html = u"<p>%s</p>" % ' '.join(page_content)
+        page_epub = epub.EpubHtml(title='Page %s' % idx, file_name='page_%s.html' % idx, lang='en')
+        page_epub.set_content(page_html)
+        pages_epub.append(page_epub)
+    for page_epub in pages_epub:
+        book.add_item(page_epub)
+    book.toc = pages_epub
+    #book.add_item(epub.EpubNcx())
+    #book.add_item(epub.EpubNav())
+    book.spine = ['cover', 'nav', ] + pages_epub
+    print("Writing output file")
+    epub.write_epub('test.epub', book, {})
+        
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description='hOCR to ePUB '
+                                                 'converter')
+    parser.add_argument('-f', '--infile', help='Input file',
+                        type=str, default=None)
+    args = parser.parse_args()
+
+    process_files(args.infile)
+
