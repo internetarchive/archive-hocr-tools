@@ -203,6 +203,7 @@ def abbyy_process_text_block(pageno, NS, block, parent_block, dpi):
     # (if they are different from paragraph)
 
     for par in block.xpath('./x:text/x:par', namespaces={'x': NS}):
+        par_has_text = False
         parelem = etree.Element('p', attrib={'class': 'ocr_par'})
 
         parelem.attrib['id'] = get_id(pageno, 'par')
@@ -272,6 +273,7 @@ def abbyy_process_text_block(pageno, NS, block, parent_block, dpi):
             last_wordelem, cboxes = abbyy_process_characters(pageno, NS, line, lineelem, formatting, line_fontsize)
             # We want to at least find a word, otherwise, discard
             if last_wordelem is not None:
+                par_has_text = True
                 char_boxes += cboxes
 
                 m, c = abbyy_baseline_from_charboxes(char_boxes)
@@ -283,9 +285,9 @@ def abbyy_process_text_block(pageno, NS, block, parent_block, dpi):
                 if last_wordelem is not None:
                     lineelem.append(last_wordelem)
 
-            parelem.append(lineelem)
+                parelem.append(lineelem)
 
-        if leftm is None:
+        if leftm is None or not par_has_text:
             print('paragraph has no lines/boundingbox', file=sys.stderr)
         else:
             kv = {'bbox': list(map(str, [leftm, topm, rightm, bottomm]))}
