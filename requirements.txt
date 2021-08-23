@@ -1,1 +1,4 @@
-lxml
+lxml==4.4.1
+hocr==1.1.4
+ebooklib==0.17.1
+derivermodule==1.0.1
