@@ -152,7 +152,9 @@ class EpubGenerator(object):
         # Add all the pages to the book
         for page_epub in pages_epub:
             book.add_item(page_epub)
-        book.toc = pages_epub
+
+        # We don't have enough information to create TOC/chapters/sections yet
+        #book.toc = pages_epub
         book.add_item(epub.EpubNcx())
         book.add_item(epub.EpubNav())
         book.spine = ['cover', 'nav', ] + pages_epub
