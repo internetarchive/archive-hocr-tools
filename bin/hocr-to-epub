@@ -95,17 +95,29 @@ class EpubGenerator(object):
         book = epub.EpubBook()
         book.reset()
         book.set_identifier(self.metadata['identifier'])
-        book.set_title(self.metadata['title'])
+        title = self.metadata['title']
+        if isinstance(title, list):
+            title = '; '.join(title)
+        book.set_title(title)
         if 'publisher' in self.metadata:
             book.add_metadata('DC', 'publisher', self.metadata['publisher'])
         if 'date' in self.metadata:
             book.add_metadata('DC', 'date', self.metadata['date'])
         if 'description' in self.metadata:
-            book.add_metadata('DC', 'description', self.metadata['description'])
+            description = self.metadata['description']
+            if isinstance(description, list):
+                description = '; '.join(description)
+            book.add_metadata('DC', 'description', description)
         if 'creator' in self.metadata:
-            book.add_author(self.metadata['creator'])
+            creator = self.metadata['creator']
+            if isinstance(creator, list):
+                creator = '; '.join(creator)
+            book.add_author(creator)
         # TODO use RFC5646 language codes
-        book.set_language(self.metadata['language'])
+        language = self.metadata['language']
+        if isinstance(language, list):
+            language = '; '.join(language)
+        book.set_language(language)
 
         css_file = epub.EpubItem(
             uid="style_nav",
@@ -122,6 +134,9 @@ class EpubGenerator(object):
         pages_epub = []
         pages_epub.append(front_matter_epub)
 
+        total_confidence = 0
+        labeled_confidence = 0
+
         # Iterate all the pages
         for idx, page in enumerate(pages_hocr):
             # Get all the words on the page
@@ -132,10 +147,17 @@ class EpubGenerator(object):
             for element in word_data:
                 for line in element['lines']:
                     for word in line['words']:
+                        # Save text data
                         text = word['text']
                         if self.strip_whitespaces:
                             text = text.strip()
                         page_content.append(text)
+
+                        # Count word confidence scores
+                        #if word['confidence'] < 50.0:
+                        #    print("Low confidence word: \"%s\" (%0.2f)" % (text, word['confidence']))
+                        total_confidence += word['confidence']
+                        labeled_confidence += 1
 
             # Create HTML/epub page
             page_html = u"<p>%s</p>" % ' '.join(page_content)
@@ -148,6 +170,11 @@ class EpubGenerator(object):
 
             page_epub.set_content(page_html)
             pages_epub.append(page_epub)
+
+        # Abort the process if the average word confidence score was too low
+        average_confidence = total_confidence/labeled_confidence
+        if average_confidence < 75.0:
+            raise RuntimeError("Confidence score (%0.02f) too low, please fix input data" % average_confidence)
 
         # Add all the pages to the book
         for page_epub in pages_epub:
