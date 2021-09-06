@@ -9,6 +9,49 @@ from ebooklib import epub
 from abbyy_to_epub3.verify_epub import EpubVerify
 from derivermodule.metadata import parse_item_metadata
 
+from PIL import Image
+import zipfile
+class ImageStack(object):
+    filenames = []
+    images_per_page = {}
+    def __init__(self, zip_file_path, basename):
+        self.basename = basename
+        self.zf = zipfile.ZipFile(zip_file_path)
+        self.parse_zip()
+        #print("\n".join(self.filenames))
+
+    def parse_zip(self):
+        # We don't care about zip ordering, we just want all the images
+        for idx, img in enumerate(sorted(self.zf.namelist())):
+            info = self.zf.getinfo(img)
+            if info.is_dir():
+                continue
+            self.filenames.append(img)
+
+    def crop_image(self, page, box):
+        try:
+            self.images_per_page[page] += 1
+        except KeyError:
+            self.images_per_page[page] = 0
+        output_filename = "%s_%04u_%02u.jpeg" % (self.basename, page, self.images_per_page[page])
+
+        image_file_name = self.filenames[page]
+        fh = self.zf.open(image_file_name)
+        img = Image.open(fh)
+        from datetime import datetime
+        print("%s - Cropping page %u to box %s" % (datetime.now(), page, box))
+        region = img.crop(box)
+        region.save(output_filename)
+        fh.close()
+        return output_filename
+
+    def __del__(self):
+        try:
+            self.zf.close()
+        except:
+            pass
+
+
 class EpubGenerator(object):
 
     __version__ = '0.0.1'
@@ -82,12 +125,27 @@ class EpubGenerator(object):
 
     strip_whitespaces = True
 
-    def __init__(self, hocr_xml_file_path):
+    def __init__(self,
+                 hocr_xml_file_path,
+                 meta_xml_file_path=None,
+                 image_stack_zip_file_path=None):
         self.hocr_xml_file_path = hocr_xml_file_path
-        self.meta_xml_file_path = self.hocr_xml_file_path.replace('_hocr.html', '_meta.xml')
+        self.meta_xml_file_path = meta_xml_file_path
+        self.image_stack_zip_file_path = image_stack_zip_file_path
+        if not self.meta_xml_file_path:
+            self.meta_xml_file_path = self.hocr_xml_file_path.replace('_hocr.html', '_meta.xml')
+        if not self.image_stack_zip_file_path:
+            self.image_stack_zip_file_path = self.hocr_xml_file_path.replace('_hocr.html', '_jp2.zip')
+
+        self.img_stack = ImageStack(self.image_stack_zip_file_path, "/tmp/test_img")
+
         self.epub_zip_file_path = self.hocr_xml_file_path.replace('_hocr.html', '_ebook.epub')
+        try:
+            self.metadata = parse_item_metadata(self.meta_xml_file_path)
+        except:
+            raise RuntimeError("Could not fine _meta.xml file for this item")
+
         print("Parsing file %s" % self.hocr_xml_file_path)
-        self.metadata = parse_item_metadata(self.meta_xml_file_path)
         self.generate()
         #self.verify()
 
@@ -140,8 +198,11 @@ class EpubGenerator(object):
         # Iterate all the pages
         for idx, page in enumerate(pages_hocr):
             # Get all the words on the page
-            dim = hocr.parse.hocr_page_get_dimensions(page)
             word_data = hocr.parse.hocr_page_to_word_data(page)
+
+            # Get all the photos on the page
+            photo_boxes = hocr.parse.hocr_page_to_photo_data(page)
+
             page_content = []
             # Combine all all the words on the page
             for element in word_data:
@@ -158,6 +219,10 @@ class EpubGenerator(object):
                         #    print("Low confidence word: \"%s\" (%0.2f)" % (text, word['confidence']))
                         total_confidence += word['confidence']
                         labeled_confidence += 1
+
+            # Crop all the image boxes
+            for box in photo_boxes:
+                cropped_image_filename = self.img_stack.crop_image(idx, box)
 
             # Create HTML/epub page
             page_html = u"<p>%s</p>" % ' '.join(page_content)
@@ -212,7 +277,9 @@ if __name__ == '__main__':
                                                  'converter')
     parser.add_argument('-f', '--infile', help='Input file',
                         type=str, default=None)
+    parser.add_argument('-m', '--metafile', help='Item _meta.xml file',
+                        type=str, default=None)
     args = parser.parse_args()
 
-    EpubGenerator(args.infile)
+    EpubGenerator(args.infile, args.metafile)
 
