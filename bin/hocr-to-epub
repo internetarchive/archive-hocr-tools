@@ -35,8 +35,7 @@ class ImageStack(object):
             self.images_per_page[page] = 0
         output_filename = "%s_%04u_%02u.jpeg" % (self.basename, page, self.images_per_page[page])
 
-        image_file_name = self.filenames[page]
-        fh = self.zf.open(image_file_name)
+        fh = self.zf.open(self.filenames[page])
         img = Image.open(fh)
         from datetime import datetime
         print("%s - Cropping page %u to box %s" % (datetime.now(), page, box))
