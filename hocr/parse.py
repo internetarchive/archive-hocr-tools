@@ -245,7 +245,7 @@ def hocr_page_to_photo_data(hocr_page, minimum_page_area_pct=10):
         # Image must cover at least minimum_page_area_pct of page
         width, height = box_a[2]-box_a[0], box_a[3]-box_a[1]
         area_box = width*height
-        if area_box < area_page/minimum_page_area_pct:
+        if area_box < area_page*(minimum_page_area_pct/100.):
             try:
                 cleaned_photo_boxes.remove(box_a)
                 #print("Box %s is too small, removing" % (box_a))
