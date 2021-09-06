@@ -107,7 +107,7 @@ def hocr_page_to_word_data(hocr_page, scaler=1):
 
     Returns:
 
-    A list of paragraph, each paragraph containing a list of lines, and each
+    A list of paragraphs, each paragraph containing a list of lines, and each
     line containing a list of words, plus properties.
 
     Paragraphs have the following attributes:
@@ -211,6 +211,59 @@ def hocr_page_to_word_data(hocr_page, scaler=1):
 
     return paragraphs
 
+def hocr_page_to_photo_data(hocr_page):
+    """
+    Parses a single hocr_page into photo data.
+
+    Args:
+
+    * hocr_page: a single hocr_page as returned by hocr_page_iterator
+
+    Returns:
+
+    A list of bounding boxes where photos were found
+    """
+    photo_boxes = []
+
+    def box_contains_box(box_a, box_b):
+        return box_a[0] >= box_b[0] and box_a[1] >= box_b[1] \
+           and box_a[2] <= box_b[2] and box_a[3] <= box_b[3]
+
+    dim = hocr_page_get_dimensions(hocr_page)
+
+    for photo in hocr_page.xpath('.//*[@class="ocr_photo"]'):
+        box = BBOX_REGEX.search(photo.attrib['title']).group(1).split()
+        box = [float(i) for i in box]
+        photo_boxes.append(box)
+
+    # Clean up the box data a bit
+    area_page = dim[0]*dim[1]
+    for box_a in photo_boxes:
+        # Image must cover at least 10% of page
+        width, height = box_a[2]-box_a[0], box_a[3]-box_a[1]
+        area_box = width*height
+        if area_box < area_page/10.:
+            #print("Box %s is too small, removing" % (box_a))
+            photo_boxes.remove(box_a)
+
+        # Nested boxes are redundant
+        for box_b in photo_boxes:
+            if box_a == box_b:
+                continue
+            if box_contains_box(box_a, box_b):
+                #print("Box %s is fully inside box %s, removing" % (box_a, box_b))
+                try:
+                    photo_boxes.remove(box_a)
+                except: # Already removed
+                    pass
+            if box_contains_box(box_b, box_a):
+                #print("Box %s is fully inside box %s, removing" % (box_b, box_a))
+                try:
+                    photo_boxes.remove(box_b)
+                except: # Already removed
+                    pass
+
+    return photo_boxes
 
 def get_title_attrs(title):
     # Assume Tesseract generated hOCR, where every ';' has a space after it
