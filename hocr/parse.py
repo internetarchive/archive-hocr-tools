@@ -225,21 +225,21 @@ def hocr_page_to_photo_data(hocr_page, minimum_page_area_pct=10):
     A list of bounding boxes where photos were found
     """
 
-    def box_contains_box(box_a, box_b):
-        return box_a[0] <= box_b[0] and box_a[1] <= box_b[1] \
-           and box_a[2] >= box_b[2] and box_a[3] >= box_b[3]
-
+    # Get the actual boxes from the page
     photo_boxes = []
-
-    dim = hocr_page_get_dimensions(hocr_page)
-
     for photo in hocr_page.xpath('.//*[@class="ocr_photo"]'):
         box = BBOX_REGEX.search(photo.attrib['title']).group(1).split()
         box = [float(i) for i in box]
         photo_boxes.append(box)
 
+    # Helper function to determine if there are nested boxes
+    def box_contains_box(box_a, box_b):
+        return box_a[0] <= box_b[0] and box_a[1] <= box_b[1] \
+           and box_a[2] >= box_b[2] and box_a[3] >= box_b[3]
+
     # Clean up the box data a bit
     cleaned_photo_boxes = list(photo_boxes)
+    dim = hocr_page_get_dimensions(hocr_page)
     area_page = dim[0]*dim[1]
     for box_a in photo_boxes:
         # Image must cover at least minimum_page_area_pct of page
