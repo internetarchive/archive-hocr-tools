@@ -14,14 +14,14 @@ import zipfile
 class ImageStack(object):
     filenames = []
     images_per_page = {}
-    def __init__(self, zip_file_path, basename):
-        self.basename = basename
-        self.zf = zipfile.ZipFile(zip_file_path)
+    def __init__(self, image_archive_file_path, output_basename):
+        self.output_basename = output_basename
+        self.image_archive_file_path = image_archive_file_path
         self.parse_zip()
-        #print("\n".join(self.filenames))
 
     def parse_zip(self):
-        # We don't care about zip ordering, we just want all the images
+        # Get all the images in the filename order (this should correspond to the page ordering)
+        self.zf = zipfile.ZipFile(self.image_archive_file_path)
         for idx, img in enumerate(sorted(self.zf.namelist())):
             info = self.zf.getinfo(img)
             if info.is_dir():
@@ -29,12 +29,15 @@ class ImageStack(object):
             self.filenames.append(img)
 
     def crop_image(self, page, box):
+        # Keep track of the number of images cropped out from each page
         try:
             self.images_per_page[page] += 1
         except KeyError:
             self.images_per_page[page] = 0
-        output_filename = "%s_%04u_%02u.jpeg" % (self.basename, page, self.images_per_page[page])
 
+        output_filename = "%s_%04u_%02u.jpeg" % (self.output_basename, page, self.images_per_page[page])
+
+        # Read the image from the zipfile and crop it
         fh = self.zf.open(self.filenames[page])
         img = Image.open(fh)
         from datetime import datetime
