@@ -198,7 +198,8 @@ class EpubGenerator(object):
         labeled_confidence = 0
 
         # Iterate all the pages
-        for idx, page in enumerate(pages_hocr):
+        images_found = 0
+        for page_idx, page in enumerate(pages_hocr):
             # Get all the words on the page
             word_data = hocr.parse.hocr_page_to_word_data(page)
 
@@ -222,20 +223,32 @@ class EpubGenerator(object):
                         total_confidence += word['confidence']
                         labeled_confidence += 1
 
-            # Crop all the image boxes
-            for box in photo_boxes:
-                cropped_image_filename = self.img_stack.crop_image(idx, box)
-
             # Create HTML/epub page
             page_html = u"<p>%s</p>" % ' '.join(page_content)
-            page_epub = epub.EpubHtml(title='Page %s' % idx,
-                                      file_name='page_%s.html' % idx,
+            page_epub = epub.EpubHtml(title='Page %s' % page_idx,
+                                      file_name='page_%s.html' % page_idx,
                                       lang=self.metadata['language'])
             page_epub.add_link(
                 href='style/style.css', rel='stylesheet', type='text/css'
             )
 
+            # Add all the images from the page
+            for image_idx, box in enumerate(photo_boxes):
+                cropped_image_filename = self.img_stack.crop_image(page_idx, box)
+                cropped_jpeg_data = open(cropped_image_filename, "rb").read()
+
+                image_filename_epub = "image_%04u_%02u.jpeg" % (page_idx, image_idx)
+                image_epub = epub.EpubImage()
+                image_epub.file_name = image_filename_epub
+                image_epub.media_type = "image/jpeg"
+                image_epub.set_content(cropped_jpeg_data)
+
+                book.add_item(image_epub)
+                page_html += "<img src=\"%s\" alt=\"Image %u\"/>" % (image_filename_epub, images_found)
+                images_found += 1
+
             page_epub.set_content(page_html)
+
             pages_epub.append(page_epub)
 
         # Abort the process if the average word confidence score was too low
