@@ -9,6 +9,8 @@ from ebooklib import epub
 from abbyy_to_epub3.verify_epub import EpubVerify
 from derivermodule.metadata import parse_item_metadata
 
+from internetarchivepdf.scandata import *
+
 from PIL import Image
 import zipfile
 class ImageStack(object):
@@ -130,14 +132,18 @@ class EpubGenerator(object):
     def __init__(self,
                  hocr_xml_file_path,
                  meta_xml_file_path=None,
-                 image_stack_zip_file_path=None):
+                 image_stack_zip_file_path=None,
+                 scandata_xml_file_path=None):
         self.hocr_xml_file_path = hocr_xml_file_path
         self.meta_xml_file_path = meta_xml_file_path
         self.image_stack_zip_file_path = image_stack_zip_file_path
+        self.scandata_xml_file_path = scandata_xml_file_path
         if not self.meta_xml_file_path:
             self.meta_xml_file_path = self.hocr_xml_file_path.replace('_hocr.html', '_meta.xml')
         if not self.image_stack_zip_file_path:
             self.image_stack_zip_file_path = self.hocr_xml_file_path.replace('_hocr.html', '_jp2.zip')
+        if not self.scandata_xml_file_path:
+            self.scandata_xml_file_path = self.hocr_xml_file_path.replace('_hocr.html', '_scandata.xml')
 
         self.img_stack = ImageStack(self.image_stack_zip_file_path, "/tmp/test_img")
 
@@ -146,6 +152,10 @@ class EpubGenerator(object):
             self.metadata = parse_item_metadata(self.meta_xml_file_path)
         except:
             raise RuntimeError("Could not fine _meta.xml file for this item")
+        try:
+            self.skip_pages = scandata_xml_get_skip_pages(self.scandata_xml_file_path)
+        except:
+            self.skip_pages = []
 
         print("Parsing file %s" % self.hocr_xml_file_path)
         self.generate()
@@ -200,6 +210,8 @@ class EpubGenerator(object):
         # Iterate all the pages
         images_found = 0
         for page_idx, page in enumerate(pages_hocr):
+            if page_idx in self.skip_pages:
+                continue
             # Get all the words on the page
             word_data = hocr.parse.hocr_page_to_word_data(page)
 
