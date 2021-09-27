@@ -329,8 +329,8 @@ class EpubGenerator(object):
             'reading sequence.'
         )
 
-        modes = ['textual']
-        modes_sufficient = ['textual']
+        modes = []
+        modes_sufficient = []
         if self.has_text:
             modes.append('textual')
             modes_sufficient.append('textual')
