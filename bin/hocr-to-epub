@@ -466,10 +466,15 @@ class EpubGenerator(object):
                     if len(line_content) and len(line_content[-1]) and line_content[-1][-1] in hyphens:
                         # Remove the last character if it is a hyphen
                         line_content[-1] = line_content[-1][:-1]
+                        # Add placeholder value
+                        line_content.append('\x7f')
                 page_content += line_content
 
-            # Create HTML/epub page
+            # Flatten list into string and add spaces
             page_text = ' '.join(page_content)
+            # Remove placeholder and spaces in the positions that previously had a line break hyphen
+            page_text = page_text.replace(' \x7f ', '')
+            # Create HTML/epub page
             page_html = u"<p>%s</p>" % page_text
 
             # Add a warning if the confidence in the text is below the given threshold
