@@ -420,10 +420,6 @@ class EpubGenerator(object):
 
             # Create HTML/epub page
             page_text = ' '.join(page_content)
-
-            # Attempt to remove hyphenation
-            #page_text = self.normalize_hyphens(page_text)
-            #print(page_text)
             page_html = u"<p>%s</p>" % page_text
 
             if words_on_page:
