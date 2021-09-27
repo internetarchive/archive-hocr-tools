@@ -289,9 +289,9 @@ class EpubGenerator(object):
         if self.has_images:
             modes.append('visual')
             modes_sufficient.append('visual')
-            summary += 'This publication is missing meaningful alternative text.'
+            summary += ' This publication is missing meaningful alternative text.'
 
-        summary += 'The publication otherwise meets WCAG 2.0 Level A.'
+        summary += ' The publication otherwise meets WCAG 2.0 Level A.'
 
         self.book.add_metadata(
             None,
