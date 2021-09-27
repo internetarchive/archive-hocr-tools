@@ -504,9 +504,10 @@ class EpubGenerator(object):
                 pages_epub.append(page_epub)
 
         # Abort the process if the average word confidence score was too low
-        average_confidence = total_confidence/words_found
-        if average_confidence < confidence_threshold:
-            raise RuntimeError("Average confidence score (%0.02f) too low, please fix input data" % average_confidence)
+        if words_found:
+            average_confidence = total_confidence/words_found
+            if average_confidence < confidence_threshold:
+                raise RuntimeError("Average confidence score (%0.02f) too low, please fix input data" % average_confidence)
 
         # Apply some transformations to remove headings and page numbers
         # TODO
