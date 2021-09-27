@@ -469,7 +469,7 @@ class EpubGenerator(object):
             if words_on_page:
                 page_confidence = page_confidence/words_on_page
                 if page_confidence < confidence_threshold:
-                    page_html = (u"<b>The text on this page estimated to be only %0.02f%% accurate" % page_confidence) + page_html
+                    page_html = (u"<b>The text on this page is estimated to be only %0.02f%% accurate</b>" % page_confidence) + page_html
 
             # Add all the images from the page
             images_on_page = 0
