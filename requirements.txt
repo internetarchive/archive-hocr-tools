@@ -2,3 +2,4 @@ lxml==4.4.1
 ebooklib==0.17.1
 abbyy_to_epub3==1.7.6
 #derivermodule==1.0.1
+iso639==0.1.4

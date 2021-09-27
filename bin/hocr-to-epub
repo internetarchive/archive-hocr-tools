@@ -2,6 +2,7 @@
 
 import sys
 import argparse
+from collections import OrderedDict
 
 #from hocr.parse import hocr_page_iterator
 import hocr.parse
@@ -10,6 +11,7 @@ from abbyy_to_epub3.verify_epub import EpubVerify
 from derivermodule.metadata import parse_item_metadata
 
 from internetarchivepdf.scandata import *
+import iso639
 
 from PIL import Image
 import zipfile
@@ -38,6 +40,7 @@ class ImageStack(object):
             self.images_per_page[page] = 0
 
         output_filename = "%s_%04u_%02u.jpeg" % (self.output_basename, page, self.images_per_page[page])
+        return output_filename
 
         # Read the image from the zipfile and crop it
         fh = self.zf.open(self.filenames[page])
@@ -161,33 +164,202 @@ class EpubGenerator(object):
         self.generate()
         #self.verify()
 
+    def normalize_language(self, language):
+        """
+        Attempt to convert a language tag to a valid country code
+        """
+        try:
+            return to_iso639_2(language)
+        except:
+            return language
+
+    def set_metadata(self):
+        """
+        Set the metadata on the epub object
+        """
+        self.book.set_identifier(self.metadata['identifier'])
+        if 'language' in self.metadata.keys():
+            if type(self.metadata['language']) is str:
+                self.metadata['language'] = self.normalize_language(self.metadata['language'])
+                self.book.set_language(self.metadata['language'])
+            elif type(self.metadata['language']) is list:
+                self.metadata['language'] = '; '.join(map(self.normalize_language, self.metadata['language']))
+                self.book.set_language(self.metadata['language'])
+        if 'title' in self.metadata.keys():
+            self.book.set_title(self.metadata['title'])
+        if 'creator' in self.metadata.keys():
+            if type(self.metadata['creator']) is str:
+                self.book.add_author(self.metadata['creator'])
+            elif type(self.metadata['creator']) is list:
+                for i, creator in enumerate(self.metadata['creator']):
+                    creator_uid = 'creator_{creator_uid}'.format(creator_uid=i)
+                    self.book.add_author(creator, uid=creator_uid)
+        if 'description' in self.metadata.keys():
+            if type(self.metadata['description']) is str:
+                self.book.add_metadata('DC', 'description', self.metadata['description'])
+            elif type(self.metadata['description']) is list:
+                for description in self.metadata['description']:
+                    self.book.add_metadata('DC', 'description', description)
+        if 'publisher' in self.metadata.keys():
+            if type(self.metadata['publisher']) is str:
+                    self.book.add_metadata('DC', 'publisher', self.metadata['publisher'])
+            elif type(self.metadata['publisher']) is list:
+                for publisher in self.metadata['publisher']:
+                    self.book.add_metadata('DC', 'publisher', publisher)
+        if 'identifier-access' in self.metadata.keys():
+            if type(self.metadata['identifier-access']) is str:
+                self.book.add_metadata(
+                    'DC', 'identifier', 'Access URL: {}'.format(
+                        self.metadata['identifier-access']
+                    )
+                )
+            elif type(self.metadata['identifier-access']) is list:
+                for identifier_access in self.metadata['identifier-access']:
+                    self.book.add_metadata(
+                        'DC', 'identifier', 'Access URL: {}'.format(
+                            identifier_access
+                        )
+                    )
+        if 'identifier-ark' in self.metadata.keys():
+            if type(self.metadata['identifier-ark']) is str:
+                self.book.add_metadata(
+                    'DC', 'identifier', 'urn:ark:{}'.format(self.metadata['identifier-ark'])
+                )
+            elif type(self.metadata['identifier-ark']) is list:
+                for identifier_ark in self.metadata['identifier-ark']:
+                    self.book.add_metadata(
+                        'DC', 'identifier', 'urn:ark:{}'.format(identifier_ark)
+                    )
+        if 'isbn' in self.metadata.keys():
+            if type(self.metadata['isbn']) is str:
+                self.book.add_metadata(
+                    'DC', 'identifier', 'urn:isbn:{}'.format(self.metadata['isbn'])
+                )
+            elif type(self.metadata['isbn']) is list:
+                for isbn in self.metadata['isbn']:
+                    self.book.add_metadata(
+                        'DC', 'identifier', 'urn:isbn:{}'.format(isbn)
+                    )
+        if 'oclc-id' in self.metadata.keys():
+            if type(self.metadata['oclc-id']) is str:
+                self.book.add_metadata(
+                    'DC', 'identifier', 'urn:oclc:{}'.format(self.metadata['oclc-id'])
+                )
+            elif type(self.metadata['oclc-id']) is list:
+                for oclc_id in self.metadata['oclc-id']:
+                    self.book.add_metadata(
+                        'DC', 'identifier', 'urn:oclc:{}'.format(oclc_id)
+                    )
+        if 'external-identifier' in self.metadata.keys():
+            if type(self.metadata['external-identifier']) is str:
+                self.book.add_metadata('DC', 'identifier', self.metadata['external-identifier'])
+            elif type(self.metadata['external-identifier']) is list:
+                for external_identifier in self.metadata['external-identifier']:
+                    self.book.add_metadata('DC', 'identifier', external_identifier)
+        if 'related-external-id' in self.metadata.keys():
+            if type(self.metadata['related-external-id']) is str:
+                self.book.add_metadata('DC', 'identifier', self.metadata['related-external-id'])
+            elif type(self.metadata['related-external-id']) is list:
+                for related_external_id in self.metadata['related-external-id']:
+                    self.book.add_metadata('DC', 'identifier', related_external_id)
+        if 'subject' in self.metadata.keys():
+            if type(self.metadata['subject']) is str:
+                self.book.add_metadata('DC', 'subject', self.metadata['subject'])
+            elif type(self.metadata['subject']) is list:
+                for subject in self.metadata['subject']:
+                    self.book.add_metadata('DC', 'subject', subject)
+        if 'date' in self.metadata.keys():
+            self.book.add_metadata('DC', 'date', self.metadata['date'])
+
+    def set_accessibility_metadata(self):
+        summary = ''
+        # Add the accessibility metadata to the publication
+        summary += (
+            'The publication was generated using automated character '
+            'recognition, therefore it may not be an accurate rendition '
+            'of the original text, and it may not offer the correct '
+            'reading sequence.'
+        )
+
+        modes = ['textual']
+        modes_sufficient = ['textual']
+        if self.has_text:
+            modes.append('textual')
+            modes_sufficient.append('textual')
+        if self.has_images:
+            modes.append('visual')
+            modes_sufficient.append('visual')
+            summary += 'This publication is missing meaningful alternative text.'
+
+        summary += 'The publication otherwise meets WCAG 2.0 Level A.'
+
+        self.book.add_metadata(
+            None,
+            'meta',
+            summary,
+            OrderedDict([('property', 'schema:accessibilitySummary')])
+        )
+
+        for mode in modes:
+            self.book.add_metadata(
+                None,
+                'meta',
+                mode,
+                OrderedDict([('property', 'schema:accessMode')])
+            )
+
+        for mode in modes_sufficient:
+            self.book.add_metadata(
+                None,
+                'meta',
+                mode,
+                OrderedDict([('property', 'schema:accessModeSufficient')])
+            )
+
+        features = ['none', ]
+        for feature in features:
+            self.book.add_metadata(
+                None,
+                'meta',
+                feature,
+                OrderedDict([('property', 'schema:accessibilityFeature')])
+            )
+
+        # these states will be true for any static content,  which we know
+        # is guaranteed for OCR generated texts.
+        hazards = [
+            'noFlashingHazard',
+            'noMotionSimulationHazard',
+            'noSoundHazard',
+        ]
+        controls = [
+            'fullKeyboardControl',
+            'fullMouseControl',
+            'fullSwitchControl',
+            'fullTouchControl',
+            'fullVoiceControl',
+        ]
+
+        for hazard in hazards:
+            self.book.add_metadata(
+                None,
+                'meta',
+                hazard,
+                OrderedDict([('property', 'schema:accessibilityHazard')])
+            )
+        for control in controls:
+            self.book.add_metadata(
+                None,
+                'meta',
+                control,
+                OrderedDict([('property', 'schema:accessibilityControl')])
+            )
+
+
     def generate(self):
-        book = epub.EpubBook()
-        book.reset()
-        book.set_identifier(self.metadata['identifier'])
-        title = self.metadata['title']
-        if isinstance(title, list):
-            title = '; '.join(title)
-        book.set_title(title)
-        if 'publisher' in self.metadata:
-            book.add_metadata('DC', 'publisher', self.metadata['publisher'])
-        if 'date' in self.metadata:
-            book.add_metadata('DC', 'date', self.metadata['date'])
-        if 'description' in self.metadata:
-            description = self.metadata['description']
-            if isinstance(description, list):
-                description = '; '.join(description)
-            book.add_metadata('DC', 'description', description)
-        if 'creator' in self.metadata:
-            creator = self.metadata['creator']
-            if isinstance(creator, list):
-                creator = '; '.join(creator)
-            book.add_author(creator)
-        # TODO use RFC5646 language codes
-        language = self.metadata['language']
-        if isinstance(language, list):
-            language = '; '.join(language)
-        book.set_language(language)
+        self.book = epub.EpubBook()
+        self.book.reset()
+        self.set_metadata()
 
         css_file = epub.EpubItem(
             uid="style_nav",
@@ -195,7 +367,7 @@ class EpubGenerator(object):
             media_type="text/css",
             content=self.style
         )
-        book.add_item(css_file)
+        self.book.add_item(css_file)
 
         front_matter_epub = epub.EpubHtml(title='Notice', file_name='notice.html', lang='en')
         front_matter_epub.set_content(self.front_matter)
@@ -204,11 +376,10 @@ class EpubGenerator(object):
         pages_epub = []
         pages_epub.append(front_matter_epub)
 
-        total_confidence = 0
-        labeled_confidence = 0
-
         # Iterate all the pages
+        total_confidence = 0
         images_found = 0
+        words_found = 0
         for page_idx, page in enumerate(pages_hocr):
             if page_idx in self.skip_pages:
                 continue
@@ -233,7 +404,7 @@ class EpubGenerator(object):
                         #if word['confidence'] < 50.0:
                         #    print("Low confidence word: \"%s\" (%0.2f)" % (text, word['confidence']))
                         total_confidence += word['confidence']
-                        labeled_confidence += 1
+                        words_found += 1
 
             # Create HTML/epub page
             page_html = u"<p>%s</p>" % ' '.join(page_content)
@@ -255,7 +426,7 @@ class EpubGenerator(object):
                 image_epub.media_type = "image/jpeg"
                 image_epub.set_content(cropped_jpeg_data)
 
-                book.add_item(image_epub)
+                self.book.add_item(image_epub)
                 page_html += "<img src=\"%s\" alt=\"Image %u\"/>" % (image_filename_epub, images_found)
                 images_found += 1
 
@@ -264,20 +435,24 @@ class EpubGenerator(object):
             pages_epub.append(page_epub)
 
         # Abort the process if the average word confidence score was too low
-        average_confidence = total_confidence/labeled_confidence
+        average_confidence = total_confidence/words_found
         if average_confidence < 75.0:
             raise RuntimeError("Confidence score (%0.02f) too low, please fix input data" % average_confidence)
 
         # Add all the pages to the book
         for page_epub in pages_epub:
-            book.add_item(page_epub)
+            self.book.add_item(page_epub)
+
+        self.has_text = words_found > 0
+        self.has_images = images_found > 0
+        self.set_accessibility_metadata()
 
         # We don't have enough information to create TOC/chapters/sections yet
         #book.toc = pages_epub
-        book.add_item(epub.EpubNcx())
-        book.add_item(epub.EpubNav())
-        book.spine = ['cover', 'nav', ] + pages_epub
-        epub.write_epub(self.epub_zip_file_path, book, {})
+        self.book.add_item(epub.EpubNcx())
+        self.book.add_item(epub.EpubNav())
+        self.book.spine = ['cover', 'nav', ] + pages_epub
+        epub.write_epub(self.epub_zip_file_path, self.book, {})
 
     def verify(self):
         self.verifier = EpubVerify()
