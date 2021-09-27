@@ -28,8 +28,8 @@ ArmenianWestern,hyw,Western Armenian
 Assamese,asm,Assamese
 Awar,aya,Awar
 Aymara,aym,Aymara
-AzeriCyrillic,,
-AzeriLatin,,
+AzeriCyrillic,aze,Azerbaijani
+AzeriLatin,aze,Azerbaijani
 Bashkir,bak,Bashkir
 Basque,eus,Basque
 Belarusian,bel,Belarusian
@@ -136,6 +136,7 @@ Hausa,hau,Hausa
 Hausa_Legacy,,
 Hawaiian,haw,Hawaiian
 Hawaiian_Legacy,,
+Hebrew,yid,Yiddish
 Hindi,hin,Hindi
 Hungarian,hun,Hungarian
 Icelandic,isl,Icelandic
@@ -230,14 +231,14 @@ Pinyin,pny,Pinyin
 Polish,pol,Polish
 PortugueseBrazilian,por,Portuguese
 PortugueseStandard,por,Portuguese
-Provencal,,
+Provencal,mis,
 Punjabi,pan,Panjabi
 Quechua,que,Quechua
 QuechuaBolivia,,
 QuechuaEcuador,,
 QuechuaPeru,,
 Quechua_Legacy,,
-RhaetoRomanic,,
+RhaetoRomanic,roh,Romansh
 Romanian,ron,Romanian
 RomanianMoldavia,,
 Romany,rom,Romany
@@ -295,6 +296,7 @@ Tagalog,tgl,Tagalog
 Tahitian,tah,Tahitian
 Tajik,tgk,Tajik
 Tajik_Legacy,,
+Thai,tha,Thai
 Tibet,bod,Tibetan
 Tinpo,,
 Tongan,ton,Tonga (Tonga Islands)
@@ -316,7 +318,7 @@ UrduIndia,,
 UrduPakistan,,
 User,,
 UzbekCyrillic,,
-UzbekLatin,,
+UzbekLatin,uzb,Uzbek
 Venda,ven,Venda
 Vietnamese,vie,Vietnamese
 Visayan,,
