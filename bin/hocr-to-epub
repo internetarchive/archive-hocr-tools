@@ -15,6 +15,11 @@ import iso639
 
 from PIL import Image
 import zipfile
+import os
+import subprocess
+
+WORKING_DIR = '/tmp/'
+
 class ImageStack(object):
     filenames = []
     images_per_page = {}
@@ -42,14 +47,40 @@ class ImageStack(object):
         output_filename = "%s_%04u_%02u.jpeg" % (self.output_basename, page, self.images_per_page[page])
         #return output_filename
 
-        # Read the image from the zipfile and crop it
-        fh = self.zf.open(self.filenames[page])
-        img = Image.open(fh)
         from datetime import datetime
         print("%s - Cropping page %u to box %s" % (datetime.now(), page, box))
+
+        # Extract the image from the zipfile
+        tempdir_zip   = os.path.join(WORKING_DIR, 'kakadu_input')
+        tempfile_jp2  = os.path.join(WORKING_DIR, 'temp.jp2')
+        tempfile_tiff = os.path.join(WORKING_DIR, 'temp.tiff')
+        self.zf.extract(self.filenames[page], tempdir_zip)
+        extracted_file_path = os.path.join(tempdir_zip, self.filenames[page])
+        os.rename(extracted_file_path, tempfile_jp2)
+
+        cmd = [
+            'kdu_expand',
+            '-num_threads', str(1),
+            '-i', tempfile_jp2,
+            '-o', tempfile_tiff
+        ]
+        try:
+            subprocess.run(
+                cmd, stdout=subprocess.DEVNULL, check=True
+            )
+        except subprocess.CalledProcessError as e:
+            raise RuntimeError(
+                "Can't convert JP2 to TIFF: {}".format(e)
+            )
+
+        #fh = self.zf.open(self.filenames[page])
+        img = Image.open(tempfile_tiff)
+        #img = Image.open(fh)
         region = img.crop(box)
         region.save(output_filename)
-        fh.close()
+        #fh.close()
+        img.close()
+        os.unlink(tempfile_tiff)
         return output_filename
 
     def __del__(self):
@@ -413,7 +444,7 @@ class EpubGenerator(object):
                         words_found += 1
                         words_on_page += 1
                     # Examine the last character of of the last element of the line
-                    if line_content[-1][-1] in hyphens:
+                    if len(line_content) and len(line_content[-1]) and line_content[-1][-1] in hyphens:
                         # Remove the last character if it is a hyphen
                         line_content[-1] = line_content[-1][:-1]
                 page_content += line_content
