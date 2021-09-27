@@ -89,15 +89,19 @@ class ImageStack(object):
         return output_filename
 
     def __del__(self):
+        # Close zipfile
         try:
             self.zf.close()
         except:
             pass
         # Clean up temporary files
-        shutil.rmtree(self.tempdir_zip)
-        os.unlink(self.tempfile_jp2)
-        for tempfile in self.temp_files:
-            os.unlink(tempfile)
+        try:
+            shutil.rmtree(self.tempdir_zip)
+            os.unlink(self.tempfile_jp2)
+            for tempfile in self.temp_files:
+                os.unlink(tempfile)
+        except:
+            pass
 
 
 class EpubGenerator(object):
@@ -466,6 +470,7 @@ class EpubGenerator(object):
             page_text = ' '.join(page_content)
             page_html = u"<p>%s</p>" % page_text
 
+            # Add a warning if the confidence in the text is below the given threshold
             if words_on_page:
                 page_confidence = page_confidence/words_on_page
                 if page_confidence < confidence_threshold:
