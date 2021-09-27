@@ -40,7 +40,7 @@ class ImageStack(object):
             self.images_per_page[page] = 0
 
         output_filename = "%s_%04u_%02u.jpeg" % (self.output_basename, page, self.images_per_page[page])
-        return output_filename
+        #return output_filename
 
         # Read the image from the zipfile and crop it
         fh = self.zf.open(self.filenames[page])
