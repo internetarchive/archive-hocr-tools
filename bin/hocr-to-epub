@@ -12,7 +12,6 @@ from derivermodule.metadata import parse_item_metadata
 
 from internetarchivepdf.scandata import *
 import iso639
-#import dehyphen
 
 from PIL import Image
 import zipfile
@@ -173,15 +172,6 @@ class EpubGenerator(object):
             return iso639.to_iso639_1(language)
         except:
             return language
-
-    def normalize_hyphens(self, paragraph):
-        """
-        Attempt to dehyphenate a paragraph
-        """
-        try:
-            return self.dehyphenator.dehyphen(paragraph)
-        except:
-            return paragraph
 
     def set_metadata(self):
         """
@@ -370,10 +360,6 @@ class EpubGenerator(object):
         self.book = epub.EpubBook()
         self.book.reset()
         self.set_metadata()
-        #try:
-        #    self.dehyphenator = dehyphen.FlairScorer(lang=self.metadata['language'])
-        #except:
-        #    self.dehyphenator = dehyphen.FlairScorer()
 
         css_file = epub.EpubItem(
             uid="style_nav",
