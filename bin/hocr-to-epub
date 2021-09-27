@@ -169,7 +169,7 @@ class EpubGenerator(object):
         Attempt to convert a language tag to a valid country code
         """
         try:
-            return to_iso639_2(language)
+            return iso639.to_iso639_1(language)
         except:
             return language
 
