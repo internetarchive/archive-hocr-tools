@@ -12,6 +12,7 @@ from derivermodule.metadata import parse_item_metadata
 
 from internetarchivepdf.scandata import *
 import iso639
+#import dehyphen
 
 from PIL import Image
 import zipfile
@@ -172,6 +173,15 @@ class EpubGenerator(object):
             return iso639.to_iso639_1(language)
         except:
             return language
+
+    def normalize_hyphens(self, paragraph):
+        """
+        Attempt to dehyphenate a paragraph
+        """
+        try:
+            return self.dehyphenator.dehyphen(paragraph)
+        except:
+            return paragraph
 
     def set_metadata(self):
         """
@@ -356,10 +366,14 @@ class EpubGenerator(object):
             )
 
 
-    def generate(self):
+    def generate(self, confidence_threshold=75.0):
         self.book = epub.EpubBook()
         self.book.reset()
         self.set_metadata()
+        #try:
+        #    self.dehyphenator = dehyphen.FlairScorer(lang=self.metadata['language'])
+        #except:
+        #    self.dehyphenator = dehyphen.FlairScorer()
 
         css_file = epub.EpubItem(
             uid="style_nav",
@@ -390,32 +404,49 @@ class EpubGenerator(object):
             photo_boxes = hocr.parse.hocr_page_to_photo_data(page)
 
             page_content = []
+            page_confidence = 0
+            words_on_page = 0
+            # ABBYY converter sometimes identifies linebreaks as a negation sign
+            hyphens = ['-', '¬']
             # Combine all all the words on the page
             for element in word_data:
+                line_content = []
                 for line in element['lines']:
                     for word in line['words']:
                         # Save text data
                         text = word['text']
                         if self.strip_whitespaces:
                             text = text.strip()
-                        page_content.append(text)
+                        line_content.append(text)
 
                         # Count word confidence scores
                         #if word['confidence'] < 50.0:
                         #    print("Low confidence word: \"%s\" (%0.2f)" % (text, word['confidence']))
+                        page_confidence += word['confidence']
                         total_confidence += word['confidence']
                         words_found += 1
+                        words_on_page += 1
+                    # Examine the last character of of the last element of the line
+                    if line_content[-1][-1] in hyphens:
+                        # Remove the last character if it is a hyphen
+                        line_content[-1] = line_content[-1][:-1]
+                page_content += line_content
 
             # Create HTML/epub page
-            page_html = u"<p>%s</p>" % ' '.join(page_content)
-            page_epub = epub.EpubHtml(title='Page %s' % page_idx,
-                                      file_name='page_%s.html' % page_idx,
-                                      lang=self.metadata['language'])
-            page_epub.add_link(
-                href='style/style.css', rel='stylesheet', type='text/css'
-            )
+            page_text = ' '.join(page_content)
+
+            # Attempt to remove hyphenation
+            #page_text = self.normalize_hyphens(page_text)
+            #print(page_text)
+            page_html = u"<p>%s</p>" % page_text
+
+            if words_on_page:
+                page_confidence = page_confidence/words_on_page
+                if page_confidence < confidence_threshold:
+                    page_html = (u"<b>The text on this page estimated to be only %0.02f%% accurate" % page_confidence) + page_html
 
             # Add all the images from the page
+            images_on_page = 0
             for image_idx, box in enumerate(photo_boxes):
                 cropped_image_filename = self.img_stack.crop_image(page_idx, box)
                 cropped_jpeg_data = open(cropped_image_filename, "rb").read()
@@ -429,15 +460,27 @@ class EpubGenerator(object):
                 self.book.add_item(image_epub)
                 page_html += "<img src=\"%s\" alt=\"Image %u\"/>" % (image_filename_epub, images_found)
                 images_found += 1
+                images_on_page += 1
 
-            page_epub.set_content(page_html)
-
-            pages_epub.append(page_epub)
+            if words_on_page or images_on_page:
+                page_epub = epub.EpubHtml(title='Page %s' % page_idx,
+                                          file_name='page_%s.html' % page_idx,
+                                          lang=self.metadata['language'])
+                page_epub.add_link(
+                    href='style/style.css', rel='stylesheet', type='text/css'
+                )
+                page_epub.set_content(page_html)
+                pages_epub.append(page_epub)
 
         # Abort the process if the average word confidence score was too low
         average_confidence = total_confidence/words_found
-        if average_confidence < 75.0:
-            raise RuntimeError("Confidence score (%0.02f) too low, please fix input data" % average_confidence)
+        if average_confidence < confidence_threshold:
+            raise RuntimeError("Average confidence score (%0.02f) too low, please fix input data" % average_confidence)
+
+        # Apply some transformations to remove headings and page numbers
+        # TODO
+        #for page_epub in pages_epub:
+        #    print(page_epub.get_body_content())
 
         # Add all the pages to the book
         for page_epub in pages_epub:
