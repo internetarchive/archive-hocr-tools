@@ -16,6 +16,7 @@ import iso639
 from PIL import Image
 import zipfile
 import os
+import shutil
 import subprocess
 
 WORKING_DIR = '/tmp/'
@@ -23,9 +24,12 @@ WORKING_DIR = '/tmp/'
 class ImageStack(object):
     filenames = []
     images_per_page = {}
+    temp_files = []
     def __init__(self, image_archive_file_path, output_basename):
         self.output_basename = output_basename
         self.image_archive_file_path = image_archive_file_path
+        self.tempdir_zip   = os.path.join(WORKING_DIR, 'kakadu_input')
+        self.tempfile_jp2  = os.path.join(WORKING_DIR, 'temp.jp2')
         self.parse_zip()
 
     def parse_zip(self):
@@ -51,27 +55,29 @@ class ImageStack(object):
         print("%s - Cropping page %u to box %s" % (datetime.now(), page, box))
 
         # Extract the image from the zipfile
-        tempdir_zip   = os.path.join(WORKING_DIR, 'kakadu_input')
-        tempfile_jp2  = os.path.join(WORKING_DIR, 'temp.jp2')
-        tempfile_tiff = os.path.join(WORKING_DIR, 'temp.tiff')
-        self.zf.extract(self.filenames[page], tempdir_zip)
-        extracted_file_path = os.path.join(tempdir_zip, self.filenames[page])
-        os.rename(extracted_file_path, tempfile_jp2)
+        tempfile_tiff = os.path.join(WORKING_DIR, 'temp_%u.tiff' % page)
+        if tempfile_tiff not in self.temp_files:
+            self.zf.extract(self.filenames[page], self.tempdir_zip)
+            extracted_file_path = os.path.join(self.tempdir_zip, self.filenames[page])
+            os.rename(extracted_file_path, self.tempfile_jp2)
 
-        cmd = [
-            'kdu_expand',
-            '-num_threads', str(1),
-            '-i', tempfile_jp2,
-            '-o', tempfile_tiff
-        ]
-        try:
-            subprocess.run(
-                cmd, stdout=subprocess.DEVNULL, check=True
-            )
-        except subprocess.CalledProcessError as e:
-            raise RuntimeError(
-                "Can't convert JP2 to TIFF: {}".format(e)
-            )
+            cmd = [
+                'kdu_expand',
+                '-num_threads', str(1),
+                '-i', self.tempfile_jp2,
+                '-o', tempfile_tiff
+            ]
+            try:
+                subprocess.run(
+                    cmd, stdout=subprocess.DEVNULL, check=True
+                )
+            except subprocess.CalledProcessError as e:
+                raise RuntimeError(
+                    "Can't convert JP2 to TIFF: {}".format(e)
+                )
+            # Keep track of the temp files so we can delete them later
+            self.temp_files.append(tempfile_tiff)
+        self.temp_files.append(output_filename)
 
         #fh = self.zf.open(self.filenames[page])
         img = Image.open(tempfile_tiff)
@@ -80,7 +86,6 @@ class ImageStack(object):
         region.save(output_filename)
         #fh.close()
         img.close()
-        os.unlink(tempfile_tiff)
         return output_filename
 
     def __del__(self):
@@ -88,6 +93,11 @@ class ImageStack(object):
             self.zf.close()
         except:
             pass
+        # Clean up temporary files
+        shutil.rmtree(self.tempdir_zip)
+        os.unlink(self.tempfile_jp2)
+        for tempfile in self.temp_files:
+            os.unlink(tempfile)
 
 
 class EpubGenerator(object):
@@ -158,6 +168,9 @@ class EpubGenerator(object):
             column-count: 1;
             break-inside: avoid;
             oeb-column-number: 1;
+        }
+        p {
+            text-indent: 4em;
         }
         """
 
