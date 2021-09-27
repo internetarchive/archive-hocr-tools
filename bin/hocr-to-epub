@@ -4,7 +4,6 @@ import sys
 import argparse
 from collections import OrderedDict
 
-#from hocr.parse import hocr_page_iterator
 import hocr.parse
 from ebooklib import epub
 from abbyy_to_epub3.verify_epub import EpubVerify
@@ -19,7 +18,10 @@ import os
 import shutil
 import subprocess
 
-WORKING_DIR = '/tmp/'
+if os.path.exists('/var/tmp/fast'):
+    WORKING_DIR = '/var/tmp/fast/'
+else:
+    WORKING_DIR = '/tmp/'
 
 class ImageStack(object):
     filenames = []
@@ -55,7 +57,7 @@ class ImageStack(object):
         print("%s - Cropping page %u to box %s" % (datetime.now(), page, box))
 
         # Extract the image from the zipfile
-        tempfile_tiff = os.path.join(WORKING_DIR, 'temp_%u.tiff' % page)
+        tempfile_tiff = os.path.join(WORKING_DIR, 'page_%u.tiff' % page)
         if tempfile_tiff not in self.temp_files:
             self.zf.extract(self.filenames[page], self.tempdir_zip)
             extracted_file_path = os.path.join(self.tempdir_zip, self.filenames[page])
@@ -196,7 +198,7 @@ class EpubGenerator(object):
         if not self.scandata_xml_file_path:
             self.scandata_xml_file_path = self.hocr_xml_file_path.replace('_hocr.html', '_scandata.xml')
 
-        self.img_stack = ImageStack(self.image_stack_zip_file_path, os.path.join(WORKING_DIR, "test_img"))
+        self.img_stack = ImageStack(self.image_stack_zip_file_path, os.path.join(WORKING_DIR, "epub_img"))
 
         self.epub_zip_file_path = self.hocr_xml_file_path.replace('_hocr.html', '_ebook.epub')
         try:
