@@ -31,5 +31,5 @@ setup(name='archive-hocr-tools',
       ],
       python_requires='>=3.6',
       include_package_data=True,
-      install_requires=['lxml-4.6.3'],
+      install_requires=['lxml'],
       package_data={'hocr': ['data/*']})
