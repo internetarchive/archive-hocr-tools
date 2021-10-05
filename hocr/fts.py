@@ -5,7 +5,7 @@ from hocr.text import get_paragraph_hocr_words, hocr_paragraph_text, \
         get_paragraph_hocr_words
 
 """
-Highly experimental and unstable interface to retreive page indexes and bounding
+Highly experimental and unstable interface to retrieve page indexes and bounding
 boxes for words matching a certain full-text-search query.
 
 Required an external system to perform the highlighting (bin/fts-text-annotate
@@ -16,7 +16,7 @@ isn't a big use for this particular file outside of Internet Archive purposes.
 """
 
 # TODO:
-# * Add notes here about internal api, interal code, backwards compat, why the
+# * Add notes here about internal api, internal code, backwards compat, why the
 #   whole thing is so awkward, what search inside does, etc
 # * Add documentation to functions, make sure they are also added to sphinx
 # * Fixup the poor exception messages, and fixup failing edge cases
