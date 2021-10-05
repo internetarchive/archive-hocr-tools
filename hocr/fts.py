@@ -40,16 +40,12 @@ def find_word_boxes(solr_line, hocr_text, hocr_par, page, page_no):
 
     # TODO: Let's not use regex here, we might not even need this check at all
     if re_braces.sub('', cur['text']) != hocr_text:
-        # XXX: Let's not accept mismatches at the moment.
-        print('solr_line', repr(solr_line))
-        print('hocr_text:', hocr_text)
-        print('FAIL2')
-        raise Exception('FAIL2')
-        #import sys; sys.exit(1)
-        cur['error'] = 'mismatch'
-        match_number += 1
-        results.append((match_number, cur))
-        return results
+        info = 'mismatch in line reconstruction solr_line:', repr(solr_line), 'hocr_text', repr(hocr_text)
+        raise Exception(info)
+        #cur['error'] = 'mismatch'
+        #match_number += 1
+        #results.append((match_number, cur))
+        #return results
 
     # Contains a tuple for each match, with the starting and ending rune
     match_indexes = []
@@ -107,12 +103,8 @@ def find_word_boxes(solr_line, hocr_text, hocr_par, page, page_no):
             hocr_word_idx += 1
             idx += wl
         if not found:
-            # Hard fail if we fail to find the word
-            print('FAIL4')
-            print(solr_line)
-            print(hocr_text)
-            raise Exception('FAIL4')
-            #import sys; sys.exit(1)
+            info = 'mismatch in index matching solr_line:', repr(solr_line), 'hocr_text', repr(hocr_text)
+            raise Exception(info)
 
         # Add 3 for {{{. This is in the solr line, but not in our line.
         idx += 3
@@ -139,11 +131,8 @@ def find_word_boxes(solr_line, hocr_text, hocr_par, page, page_no):
 
         if not found:
             # Hard fail if we fail to find the word
-            print('FAIL4.1')
-            print(solr_line)
-            print(hocr_text)
-            raise Exception('FAIL4.1')
-            #import sys; sys.exit(1)
+            info = 'mismatch in finding matched word solr_line:', repr(solr_line), 'hocr_text', repr(hocr_text)
+            raise Exception(info)
 
         # Add 3 for }}}. This is in the solr line, but not in our line.
         idx += 3
@@ -231,7 +220,7 @@ def find_matches(lookup_table, hocrfp, text):
             txt = hocr_paragraph_text(paragraph)
 
             if txt != line.replace('{{{', '').replace('}}}', ''):
-                raise Exception('Reconstructed text does not match:', 'TEXT', txt, 'LINE', line)
+                raise Exception('Reconstructed text does not match:', 'TEXT', repr(txt), 'LINE', repr(line))
 
             word_results = find_word_boxes(line, txt, paragraph, page,
                                            page_number)
