@@ -29,6 +29,7 @@ re_braces = re.compile(r'(\{\{\{|\}\}\})')
 
 # TODO rename and note unstable api
 def find_word_boxes(solr_line, hocr_text, hocr_par, page, page_no):
+    match_number = 0
     match_with = solr_line
     cur = {
         'text': solr_line,
