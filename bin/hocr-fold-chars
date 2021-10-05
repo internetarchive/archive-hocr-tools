@@ -36,7 +36,7 @@ def process_files(infile):
         # Let's Remove the xmlns in the div.
         # Yes, this is horrible, but cleanup_namespaces doesn't help
         # since as far as tostring knows, this is the root.
-        # Let's also add two spaces for indendation for the first
+        # Let's also add two spaces for indentation for the first
         # page, and one for all the other pages.
         if page_no == 1:
             s = '  ' + \

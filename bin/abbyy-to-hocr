@@ -31,7 +31,7 @@ import io
 # X Add scan_res (from image or item metadata? meh)
 # X word confidence wordFromDictionary (?) + char confs?, 'suspicious' attribute
 # - Add lots of (strict) assertions to prevent silent bugs (unknown areas/types, etc)
-# - ocr_page image property - point to the some url for convience (where do we
+# - ocr_page image property - point to the some url for convenience (where do we
 #   get it from?)
 
 # Tested versions:
