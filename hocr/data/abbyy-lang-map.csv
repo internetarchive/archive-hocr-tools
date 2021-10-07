@@ -99,7 +99,7 @@ French,fra,French
 FrenchBelgian,fra,French
 FrenchCanadian,fra,French
 FrenchLuxembourg,fra,French
-FrenchMonaco,,
+FrenchMonaco,fra,French
 FrenchProperNames,,
 FrenchStandard,fra,French
 FrenchSwiss,fra,French
@@ -143,7 +143,7 @@ Icelandic,isl,Icelandic
 Ido,ido,Ido
 Indonesian,ind,Indonesian
 Ingush,inh,Ingush
-Interlingua,,
+Interlingua,ina,Interlingua (International Auxiliary Language Association)
 Irish,gle,Irish
 Irish_Legacy,,
 Italian,ita,Italian
@@ -245,15 +245,15 @@ Romany,rom,Romany
 Ruanda,,
 Rundi,run,Rundi
 Russian,rus,Russian
-RussianMoldavia,,
+RussianMoldavia,rus,Russian
 RussianOldSpelling,rus,Russian
 RussianProperNames,,
 Saami,,
 Samoan,smo,Samoan
 Sanskrit,san,Sanskrit
 Selkup,sel,Selkup
-SerbianCyrillic,,
-SerbianLatin,,
+SerbianCyrillic,srp,Serbian
+SerbianLatin,srp,Serbian
 Shona,sna,Shona
 Sindhi,snd,Sindhi
 Sioux,dak,Dakota
