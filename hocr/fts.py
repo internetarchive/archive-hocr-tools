@@ -2,7 +2,7 @@ from hocr.parse import hocr_page_to_word_data_fast, hocr_page_get_dimensions
 from hocr.searching import hocr_lookup_page_by_dat, \
         hocr_lookup_by_plaintext_offset
 from hocr.text import get_paragraph_hocr_words, hocr_paragraph_text, \
-        get_paragraph_hocr_words
+        get_paragraph_hocr_words, hocr_page_text_from_word_data
 
 """
 Highly experimental and unstable interface to retrieve page indexes and
@@ -187,10 +187,31 @@ def find_word_boxes(solr_line, hocr_text, hocr_par, page, page_no):
     return results
 
 
-def find_matches(lookup_table, hocrfp, text):
+def find_matches(lookup_table, hocrfp, text, es_whitespace_fixup_required=False):
     text_byte_count = 0
     current_dat = None
     page_number = 0
+
+    if es_whitespace_fixup_required:
+        # There might be faster ways of doing this (e.g. read the _searchtext
+        # file and count the amount of 'whitespace' bytes)
+        done = False
+        for dat in lookup_table:
+            page = hocr_lookup_page_by_dat(hocrfp, dat)
+            word_data = hocr_page_to_word_data_fast(page)
+            page_text = hocr_page_text_from_word_data(word_data)
+
+            for line in page_text:
+                if line.strip() == '':
+                    # Add counted bytes, one for newline
+                    text_byte_count += len(line) + 1
+                    continue
+                else:
+                    done = True
+                    break
+            if done:
+                break
+
 
     # For every line in the highlighted text, let's find matches...
     for line in text[:-1].split('\n'):

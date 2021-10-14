@@ -10,14 +10,15 @@ from hocr.util import open_if_required
 from hocr.fts import find_matches
 
 
-def process_file(hocrfile, textfile, tablepath):
+def process_file(hocrfile, textfile, tablepath, es_workaround):
     lookup_table = hocr_load_lookup_table(tablepath)
 
     hocrfp = open_if_required(hocrfile)
     textfp = open_if_required(textfile)
     text = textfp.read().decode('utf-8')
 
-    for word_results in find_matches(lookup_table, hocrfp, text):
+    for word_results in find_matches(lookup_table, hocrfp, text,
+            es_whitespace_fixup_required=es_workaround):
         json.dump(word_results, sys.stdout)
         sys.stdout.write('\n')
 
@@ -32,6 +33,9 @@ if __name__ == '__main__':
                                                  default=None)
     parser.add_argument('--table', help='Table to use',
                         type=str, default=None)
+    parser.add_argument('--es-workaround', help='Flag to enable working around'
+                        'ES stripping leading whitespace',
+                        default=False, action='store_true')
     args = parser.parse_args()
 
-    process_file(args.hocr, args.annotated_text, args.table)
+    process_file(args.hocr, args.annotated_text, args.table, args.es_workaround)
