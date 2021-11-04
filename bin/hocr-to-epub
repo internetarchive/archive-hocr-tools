@@ -186,21 +186,27 @@ class EpubGenerator(object):
                  hocr_xml_file_path,
                  meta_xml_file_path=None,
                  image_stack_zip_file_path=None,
-                 scandata_xml_file_path=None):
+                 scandata_xml_file_path=None,
+                 epub_zip_file_path=None):
+
+        # Copy arguments to locals
         self.hocr_xml_file_path = hocr_xml_file_path
         self.meta_xml_file_path = meta_xml_file_path
         self.image_stack_zip_file_path = image_stack_zip_file_path
         self.scandata_xml_file_path = scandata_xml_file_path
+        self.epub_zip_file_path = epub_zip_file_path
+
+        # Set sensible defaults for arguments that weren't provided
         if not self.meta_xml_file_path:
             self.meta_xml_file_path = self.hocr_xml_file_path.replace('_hocr.html', '_meta.xml')
         if not self.image_stack_zip_file_path:
             self.image_stack_zip_file_path = self.hocr_xml_file_path.replace('_hocr.html', '_jp2.zip')
         if not self.scandata_xml_file_path:
             self.scandata_xml_file_path = self.hocr_xml_file_path.replace('_hocr.html', '_scandata.xml')
+        if not self.epub_zip_file_path:
+            self.epub_zip_file_path = self.hocr_xml_file_path.replace('_hocr.html', '_ebook.epub')
 
         self.img_stack = ImageStack(self.image_stack_zip_file_path, os.path.join(WORKING_DIR, "epub_img"))
-
-        self.epub_zip_file_path = self.hocr_xml_file_path.replace('_hocr.html', '_ebook.epub')
         try:
             self.metadata = parse_item_metadata(self.meta_xml_file_path)
         except:
@@ -427,7 +433,6 @@ class EpubGenerator(object):
         pages_epub.append(front_matter_epub)
 
         # Iterate all the pages
-        total_confidence = 0
         images_found = 0
         words_found = 0
         for page_idx, page in enumerate(pages_hocr):
@@ -456,10 +461,7 @@ class EpubGenerator(object):
                         line_content.append(text)
 
                         # Count word confidence scores
-                        #if word['confidence'] < 50.0:
-                        #    print("Low confidence word: \"%s\" (%0.2f)" % (text, word['confidence']))
                         page_confidence += word['confidence']
-                        total_confidence += word['confidence']
                         words_found += 1
                         words_on_page += 1
                     # Examine the last character of of the last element of the line
@@ -510,12 +512,6 @@ class EpubGenerator(object):
                 page_epub.set_content(page_html)
                 pages_epub.append(page_epub)
 
-        # Abort the process if the average word confidence score was too low
-        if words_found:
-            average_confidence = total_confidence/words_found
-            if average_confidence < confidence_threshold:
-                raise RuntimeError("Average confidence score (%0.02f) too low, please fix input data" % average_confidence)
-
         # Apply some transformations to remove headings and page numbers
         # TODO
         #for page_epub in pages_epub:
@@ -557,13 +553,28 @@ class EpubGenerator(object):
             raise RuntimeError(errors)
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='hOCR to ePUB '
-                                                 'converter')
-    parser.add_argument('-f', '--infile', help='Input file',
+    parser = argparse.ArgumentParser(description='hOCR to ePUB converter')
+
+    parser.add_argument('-f', '--infile', help='Item _hocr.html file',
+                        type=str, default=None)
+    parser.add_argument('-o', '--outfile', help='Output _ebook.epub file',
                         type=str, default=None)
     parser.add_argument('-m', '--metafile', help='Item _meta.xml file',
                         type=str, default=None)
+    parser.add_argument('-i', '--imagestack', help='Item _jp2.zip file',
+                        type=str, default=None)
+    parser.add_argument('-s', '--scandata', help='Item _scandata.xml file',
+                        type=str, default=None)
+    parser.add_argument('-w', '--workingdir', help='Directory used for temp files',
+                        type=str, default=None)
     args = parser.parse_args()
 
-    EpubGenerator(args.infile, args.metafile)
+    if not args.infile:
+        raise Exception("Must provide hOCR input file with -f")
+
+    # Allow external caller to override working directory from default /tmp/ or /var/tmp/fast/
+    if args.workingdir:
+        WORKING_DIR = args.workingdir
+
+    EpubGenerator(args.infile, args.metafile, args.imagestack, args.scandata, args.outfile)
 
