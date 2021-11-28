@@ -269,7 +269,21 @@ def hocr_page_to_word_data_fast(hocr_page):
                     has_ocrx_cinfo = 2
 
                 if wordbased:
+                    # Words may contains additional nodes like <em>
+                    while True:
+                        children = word.getchildren()
+                        if len(children) == 0:
+                            break
+
+                        if len(children) > 1:
+                            raise ValueError('Not character based but word has multiple children?')
+
+                        word = children[0]
+
                     rawtext = word.text
+
+                    if word.text is None:
+                        raise ValueError('Word with no text value?')
 
                 word_data.append({'bbox': box, 'text': rawtext,
                                   'confidence': conf})
