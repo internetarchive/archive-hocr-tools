@@ -162,7 +162,22 @@ def hocr_page_to_word_data(hocr_page, scaler=1):
                     wordbased = False
 
                 if wordbased:
-                    rawtext = word.text
+                    wword = word
+                    # Words may contains additional nodes like <em>
+                    while True:
+                        children = wword.getchildren()
+                        if len(children) == 0:
+                            break
+
+                        if len(children) > 1:
+                            raise ValueError('Not character based but word has multiple children?')
+
+                        wword = children[0]
+
+                    rawtext = wword.text
+
+                    if wword.text is None:
+                        raise ValueError('Word with no text value?')
 
                 box = BBOX_REGEX.search(word.attrib['title']).group(1).split()
                 box = [float(i) for i in box]
