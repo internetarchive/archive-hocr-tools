@@ -154,7 +154,7 @@ Japanese,jpn,Japanese
 Kabardian,kbd,Kabardian
 Kachin,kac,Kachin
 Kalmyk,xal,Kalmyk
-KarachayBalkar,,
+KarachayBalkar,krc,Karachay-Balkar
 Karakalpak,kaa,Kara-Kalpak
 Kashmiri,kas,Kashmiri
 KashmiriIndia,,
@@ -242,7 +242,7 @@ RhaetoRomanic,roh,Romansh
 Romanian,ron,Romanian
 RomanianMoldavia,,
 Romany,rom,Romany
-Ruanda,,
+Ruanda,kin,Kinyarwanda
 Rundi,run,Rundi
 Russian,rus,Russian
 RussianMoldavia,rus,Russian
@@ -321,7 +321,7 @@ UzbekCyrillic,uzb,Uzbek
 UzbekLatin,uzb,Uzbek
 Venda,ven,Venda
 Vietnamese,vie,Vietnamese
-Visayan,,
+Visayan,ceb,Cebuano
 Welsh,cym,Welsh
 Welsh_Legacy,,
 Wend,,
