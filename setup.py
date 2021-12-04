@@ -22,7 +22,7 @@ setup(name='archive-hocr-tools',
                'bin/fts-text-match', 'bin/hocr-lookup-check',
                'bin/hocr-lookup-create', 'bin/hocr-lookup-reconstruct',
                'bin/hocr-text-paragraphs', 'bin/hocr-extract-page',
-               'bin/abbyy-to-hocr'],
+               'bin/abbyy-to-hocr', 'bin/hocr-split-pages'],
       classifiers=[
           'Development Status :: 3 - Alpha',
           'Intended Audience :: Developers',
