@@ -234,10 +234,10 @@ PortugueseStandard,por,Portuguese
 Provencal,mis,
 Punjabi,pan,Panjabi
 Quechua,que,Quechua
-QuechuaBolivia,,
-QuechuaEcuador,,
-QuechuaPeru,,
-Quechua_Legacy,,
+QuechuaBolivia,que,Quechua
+QuechuaEcuador,que,Quechua
+QuechuaPeru,que,Quechua
+Quechua_Legacy,que,Quechua
 RhaetoRomanic,roh,Romansh
 Romanian,ron,Romanian
 RomanianMoldavia,,
