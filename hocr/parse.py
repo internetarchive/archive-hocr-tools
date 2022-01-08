@@ -3,7 +3,7 @@ import re
 
 from lxml import etree
 
-from .util import open_if_required
+from .util import open_if_required, HOCR_SCHEMA
 
 
 WRITING_DIRECTION_UNSPECIFIED = 0
@@ -43,7 +43,7 @@ def hocr_page_iterator(fd_or_path):
 
     # TODO: Add gzip loading, specify what file_like should be (I suggest just
     # file descriptor or just path)
-    doc = etree.iterparse(fp, tag='{http://www.w3.org/1999/xhtml}div')
+    doc = etree.iterparse(fp, tag=(HOCR_SCHEMA + 'div', 'div'))
     for act, elem in doc:
         if elem.tag[-3:] == 'div' and elem.attrib['class'] == 'ocr_page':
             page = elem
@@ -130,13 +130,14 @@ def hocr_page_to_word_data(hocr_page, scaler=1):
     """
     paragraphs = []
 
-    for par in hocr_page.xpath('.//*[@class="ocr_par"]'):
+    for par in hocr_page.xpath('.//*[@class="ocrx_block" or @class="ocr_par"]'):
         paragraph_data = {'lines': []}
 
         paragraph_writing_direction = WRITING_DIRECTION_UNSPECIFIED
         if 'dir' in par.attrib:
             paragraph_writing_direction = wdmap[par.attrib['dir']]
 
+        # We assume that the direct children are all the lines
         for line in par.getchildren():
             line_data = {}
 
@@ -260,9 +261,10 @@ def hocr_page_to_word_data_fast(hocr_page):
 
     has_ocrx_cinfo = 0
 
-    for par in hocr_page.xpath('.//*[@class="ocr_par"]'):
+    for par in hocr_page.xpath('.//*[@class="ocrx_block" or @class="ocr_par"]'):
         paragraph_data = {'lines': []}
 
+        # We assume that the direct children are all the lines
         for line in par.getchildren():
             line_data = {}
 
