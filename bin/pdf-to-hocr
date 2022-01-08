@@ -1,0 +1,324 @@
+#!/usr/bin/env python3
+
+import sys
+import argparse
+
+from lxml import etree
+
+from xml.sax.saxutils import escape as xmlescape
+
+import fitz
+
+from hocr.util import open_if_required
+
+import numpy as np
+
+
+# Functions related to unique id="" generation
+def page_id(pageno):
+    check_page_reset(pageno)
+    return 'page_%.06d' % pageno
+
+LAST_PAGE = None
+def check_page_reset(pageno):
+    global LAST_PAGE
+
+    if LAST_PAGE is None:
+        LAST_PAGE = pageno
+
+    if pageno != LAST_PAGE:
+        LAST_PAGE = pageno
+        reset_ids()
+
+__IDS = {'block': 0,
+         'par': 0,
+         'line': 0,
+         'word': 0,
+         'photo': 0,
+         'table': 0,
+         'separator': 0}
+
+def reset_ids():
+    global __IDS
+    for x in __IDS:
+        __IDS[x] = 0
+
+def get_id(pageno, name):
+    global __IDS
+    check_page_reset(pageno)
+    ret = '%s_%.06d_%.06d' % (name, pageno, __IDS[name])
+    __IDS[name] += 1
+
+    return ret
+
+
+def assemble_hocr_title_element(keyvals):
+    """
+    Create a title="<...>" string from key, value pairs
+
+    Args:
+
+    * keyvals (dict): key value pairs
+
+    Returns: string to insert as title (without the surrounding double quotes)
+    """
+    r = ''
+
+    for key, val in keyvals.items():
+        tot = [key]
+
+        if isinstance(val, list):
+            tot += val
+        else:
+            tot.append(val)
+
+        r += xmlescape(' '.join(tot))
+        r += '; '
+
+    if r:
+        # Strip off last '; '
+        return r[:-2]
+
+    return r
+
+
+# TODO: Perhaps update/sync with abbyy code
+def pdf_baseline_from_charboxes(charboxes):
+    """
+    Calculates the baseline of characters part of a single line segment using
+    least squares on the center ((left+right)/2) of the bottom of every bounding box.
+
+    Args:
+
+    * charboxes: list of character bounding boxes (which are a list of 4 entries)
+
+    Returns:
+
+    Tuple of m, c (float, int) where m is the increment and c is the offset.
+    """
+    points = []
+
+    x = []
+    y = []
+    for charbox in charboxes:
+        # (Left+Right)/2
+        x.append((charbox[0] + charbox[2])/2)
+        # Bottom
+        y.append(charbox[3])
+
+    x = np.array(x)
+    y = np.array(y)
+
+    # Normalise to minimal coordinate, maybe we ought to normalise to the first
+    # coordinate?
+    y -= y.min()
+
+    A = np.vstack([x, np.ones(len(x))]).T
+
+    r = np.linalg.lstsq(A, y, rcond=None)
+    m, c = r[0]
+
+    return float(m), int(c)
+
+
+def pdf_process_text_block(pageno, block, parent_block):
+    parelem = etree.Element('p', attrib={'class': 'ocr_par'})
+
+    parelem.attrib['id'] = get_id(pageno, 'par')
+
+    leftm = None
+    topm = None
+    rightm = None
+    bottomm = None
+
+    for line in block['lines']:
+        char_boxes = []
+
+        lineelem = etree.Element('span', attrib={'class': 'ocr_line'})
+
+        kv = {}
+        kv['bbox'] = [str(int(x)) for x in line['bbox']]
+
+        last_wordelem, cboxes = pdf_process_characters(pageno, line, lineelem)
+
+        if last_wordelem is not None:
+            char_boxes += cboxes
+
+            # TODO: Just use the dictionary properties?
+            m, c = pdf_baseline_from_charboxes(char_boxes)
+            kv['baseline'] = '%f %d' % (m, c)
+
+            lineelem.attrib['title'] = assemble_hocr_title_element(kv)
+            lineelem.attrib['id'] = get_id(pageno, 'line')
+
+            if last_wordelem is not None:
+                lineelem.append(last_wordelem)
+
+        parelem.append(lineelem)
+
+    kv = {}
+    kv = {'bbox': [str(int(x)) for x in block['bbox']]}
+    parelem.attrib['title'] = assemble_hocr_title_element(kv)
+    parent_block.append(parelem)
+
+
+def _gather_word_data(pageno, wordelem, wordchar_bboxes, span):
+    # Turn these calculations into a function
+    word_bbox = [
+        str(min(x[0] for x in wordchar_bboxes)),
+        str(min(x[1] for x in wordchar_bboxes)),
+        str(max(x[2] for x in wordchar_bboxes)),
+        str(max(x[3] for x in wordchar_bboxes)),
+    ]
+
+    word_data = {'bbox': word_bbox, 'x_wconf': '100', }
+
+    word_data['x_fsize'] = str(int(span['size']))
+
+    wordelem.attrib['id'] = get_id(pageno, 'word')
+    wordelem.attrib['title'] = \
+            assemble_hocr_title_element(word_data)
+
+
+def pdf_process_characters(pageno, line, lineelem):
+    wordelem = etree.Element('span', attrib={'class': 'ocrx_word'})
+    charelem = None
+    word_start = True
+    found_any = False
+
+    wordchar_bboxes = []
+    all_wordchar_bboxes = []
+
+    for span in line['spans']:
+        for char in span['chars']:
+            # TODO: What do we do with multiple spaces after each other?
+            # I guess if there's more than one we could consider adding them to
+            # the word, but I think it's better to just ignore them for hOCR
+            # data purposes.
+            if char['c'] == ' ':
+                if len(wordchar_bboxes) == 0:
+                    # multiple repeating spaces
+                    continue
+
+                if wordelem is not None:
+                    lineelem.append(wordelem)
+                    #if 'dir' in wordelem.attrib and wordelem.attrib['dir'] == 'rtl':
+                    #    wordelem[-1].text += chr(0x200e)
+
+                    _gather_word_data(pageno, wordelem, wordchar_bboxes, span)
+
+                wordelem = etree.Element('span', attrib={'class': 'ocrx_word'})
+
+                word_start = True
+                wordchar_bboxes = []
+
+                continue
+
+            found_any = True
+
+            charelem = etree.Element('span', attrib={'class': 'ocrx_cinfo'})
+            charelem.text = char['c']
+
+            conf = float(100)
+
+            bbox = [int(x) for x in char['bbox']]
+            #bbox = [str(int(x)) for x in char['bbox']]
+            wordchar_bboxes.append(bbox)
+            all_wordchar_bboxes.append(bbox)
+
+            title_data = {}
+            title_data['x_bboxes'] = [str(x) for x in bbox]
+            title_data['x_confs'] = str(conf)
+
+            charelem.attrib['title'] = assemble_hocr_title_element(title_data)
+            wordelem.append(charelem)
+
+            word_start = False
+
+        ## If word if rtl, let's add <200e>
+        #if 'dir' in wordelem.attrib and wordelem.attrib['dir'] == 'rtl':
+        #    wordelem[-1].text += chr(0x200e)
+
+    # Sometimes we find no legit chars in a word, in which case charelem is None
+    if found_any and len(wordchar_bboxes):
+        _gather_word_data(pageno, wordelem, wordchar_bboxes, span)
+
+        return wordelem, all_wordchar_bboxes
+
+    return None, None
+
+
+def pdf_page_to_hocr_page(page, pageno=None):
+    pagedata = page.get_text(option='rawdict')
+    # TODO: left to right, right to left
+
+    kv = {}
+    w = str(int(pagedata['width']))
+    h = str(int(pagedata['height']))
+    kv['bbox'] = ['0', '0', w, h]
+
+    if pageno is not None:
+        kv['ppageno'] = str(pageno)
+    else:
+        kv['ppageno'] = '0'
+
+    kv['image'] = 'https://archive.org/todo' # TODO: some image path?
+
+    # TODO
+    dpi = 300
+    kv['scan_res'] = '%d %d' % (dpi, dpi)
+
+    pageelem = etree.Element('div', attrib={'class': 'ocr_page',
+        'id': page_id(pageno),
+        'title': assemble_hocr_title_element(kv),
+        })
+
+    for block in pagedata['blocks']:
+        if block['type'] != 0:
+            # TODO: Skip blocks that are not text, for now
+            continue
+
+        kv = {}
+        kv['bbox'] = [str(int(x)) for x in block['bbox']]
+        blockelem = etree.Element('div', attrib={'class': 'ocr_carea'})
+        blockelem.attrib['title'] = assemble_hocr_title_element(kv)
+        blockelem.attrib['id'] = get_id(pageno, 'block')
+
+        pdf_process_text_block(pageno, block, blockelem)
+        pageelem.append(blockelem)
+
+    return pageelem
+
+
+
+def process_files(filename):
+    print('''<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+  <head>
+    <title></title>
+    <meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+    <meta name="ocr-system" content="%s" />
+    <meta name="ocr-capabilities" content="ocr_page ocr_carea ocr_par ocr_line ocrx_word ocrp_wconf ocrp_lang ocrp_dir ocrp_font ocrp_fsize" />
+  </head>
+  <body>
+''' % xmlescape('TODO PDF Producer'))
+
+    doc = fitz.open(filename)
+    for idx, page in enumerate(doc):
+        hocr_page = pdf_page_to_hocr_page(page, pageno=idx)
+        s = etree.tostring(hocr_page, pretty_print=True, method='xml',
+                           encoding='utf-8').decode('utf-8')
+        print(s)
+    print('''  </body>
+</html>
+''')
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description='Page to hOCR converter')
+    parser.add_argument('-f', '--infile', help='Input file',
+                        type=str, default=None)
+    args = parser.parse_args()
+
+    process_files(args.infile)
