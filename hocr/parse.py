@@ -183,7 +183,10 @@ def hocr_page_to_word_data(hocr_page, scaler=1):
                 box = BBOX_REGEX.search(word.attrib['title']).group(1).split()
                 box = [float(i) for i in box]
 
-                conf = int(X_WCONF_REGEX.search(word.attrib['title']).group(1).split()[0])
+                conf = None
+                m = X_WCONF_REGEX.search(word.attrib['title'])
+                if m:
+                    conf = int(m.group(1).split()[0])
 
                 f_sizeraw = X_FSIZE_REGEX.search(word.attrib['title'])
                 if f_sizeraw:
