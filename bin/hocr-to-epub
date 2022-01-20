@@ -6,7 +6,6 @@ from collections import OrderedDict
 
 import hocr.parse
 from ebooklib import epub
-from abbyy_to_epub3.verify_epub import EpubVerify
 from derivermodule.metadata import parse_item_metadata
 
 from internetarchivepdf.scandata import *
@@ -532,25 +531,6 @@ class EpubGenerator(object):
         self.book.spine = ['cover', 'nav', ] + pages_epub
         epub.write_epub(self.epub_zip_file_path, self.book, {})
 
-    def verify(self):
-        self.verifier = EpubVerify()
-        result = self.verifier.run_epubcheck(self.epub_zip_file_path)
-        #print(result.messages)
-        for err in result.messages:
-            try:
-                print(err.level)
-                print(err.message)
-                #print(err.suggestion)
-                print()
-            except:
-                pass
-        return
-
-        errors = [err for err in result.messages if
-                  # only keep desired_levels
-                  err.level.lower() in ['error', 'fatal']]
-        if errors:
-            raise RuntimeError(errors)
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='hOCR to ePUB converter')
