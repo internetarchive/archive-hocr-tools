@@ -1,0 +1,560 @@
+#!/usr/bin/env python
+
+import sys
+import argparse
+from collections import OrderedDict
+
+import hocr.parse
+from ebooklib import epub
+from derivermodule.metadata import parse_item_metadata
+
+from internetarchivepdf.scandata import *
+import iso639
+
+from PIL import Image
+import zipfile
+import os
+import shutil
+import subprocess
+
+if os.path.exists('/var/tmp/fast'):
+    WORKING_DIR = '/var/tmp/fast/'
+else:
+    WORKING_DIR = '/tmp/'
+
+class ImageStack(object):
+    filenames = []
+    images_per_page = {}
+    temp_files = []
+    def __init__(self, image_archive_file_path, output_basename):
+        self.output_basename = output_basename
+        self.image_archive_file_path = image_archive_file_path
+        self.tempdir_zip   = os.path.join(WORKING_DIR, 'kakadu_input')
+        self.tempfile_jp2  = os.path.join(WORKING_DIR, 'temp.jp2')
+        self.parse_zip()
+
+    def parse_zip(self):
+        # Get all the images in the filename order (this should correspond to the page ordering)
+        self.zf = zipfile.ZipFile(self.image_archive_file_path)
+        for idx, img in enumerate(sorted(self.zf.namelist())):
+            info = self.zf.getinfo(img)
+            if info.is_dir():
+                continue
+            self.filenames.append(img)
+
+    def crop_image(self, page, box):
+        # Keep track of the number of images cropped out from each page
+        try:
+            self.images_per_page[page] += 1
+        except KeyError:
+            self.images_per_page[page] = 0
+
+        output_filename = "%s_%04u_%02u.jpeg" % (self.output_basename, page, self.images_per_page[page])
+        #return output_filename
+
+        from datetime import datetime
+        print("%s - Cropping page %u to box %s" % (datetime.now(), page, box))
+
+        # Extract the image from the zipfile
+        tempfile_tiff = os.path.join(WORKING_DIR, 'page_%u.tiff' % page)
+        if tempfile_tiff not in self.temp_files:
+            self.zf.extract(self.filenames[page], self.tempdir_zip)
+            extracted_file_path = os.path.join(self.tempdir_zip, self.filenames[page])
+            os.rename(extracted_file_path, self.tempfile_jp2)
+
+            cmd = [
+                'kdu_expand',
+                '-num_threads', str(1),
+                '-i', self.tempfile_jp2,
+                '-o', tempfile_tiff
+            ]
+            try:
+                subprocess.run(
+                    cmd, stdout=subprocess.DEVNULL, check=True
+                )
+            except subprocess.CalledProcessError as e:
+                raise RuntimeError(
+                    "Can't convert JP2 to TIFF: {}".format(e)
+                )
+            # Keep track of the temp files so we can delete them later
+            self.temp_files.append(tempfile_tiff)
+        self.temp_files.append(output_filename)
+
+        #fh = self.zf.open(self.filenames[page])
+        img = Image.open(tempfile_tiff)
+        #img = Image.open(fh)
+        region = img.crop(box)
+        region.save(output_filename)
+        #fh.close()
+        img.close()
+        return output_filename
+
+    def __del__(self):
+        # Close zipfile
+        try:
+            self.zf.close()
+        except:
+            pass
+        # Clean up temporary files
+        try:
+            shutil.rmtree(self.tempdir_zip)
+            os.unlink(self.tempfile_jp2)
+            for tempfile in self.temp_files:
+                os.unlink(tempfile)
+        except:
+            pass
+
+
+class EpubGenerator(object):
+
+    __version__ = '0.0.1'
+
+    front_matter = (
+        '<div class="offset">'
+        '<p dir="ltr">This book was produced in EPUB format by the '
+        'Internet Archive.</p> '
+        '<p dir="ltr">The book pages were scanned and converted to EPUB '
+        'format automatically. This process relies on optical character '
+        'recognition, and is somewhat susceptible to errors. The book may '
+        'not offer the correct reading sequence, and there may be '
+        'weird characters, non-words, and incorrect guesses at '
+        'structure. Some page numbers and headers or footers may remain '
+        'from the scanned page. The process which identifies images might '
+        'have found stray marks on the page which are not actually images '
+        'from the book. The hidden page numbering which may be available '
+        'to your ereader corresponds to the numbered pages in the print '
+        'edition, but is not an exact match;  page numbers will increment '
+        'at the same rate as the corresponding print edition, but we may '
+        'have started numbering before the print book\'s visible page '
+        'numbers.  The Internet Archive is working to improve the '
+        'scanning process and resulting books, but in the meantime, we '
+        'hope that this book will be useful to you.</p> '
+        '<p dir="ltr">The Internet Archive was founded in 1996 to build '
+        'an Internet library and to promote universal access to all '
+        'knowledge. The Archive\'s purposes include offering permanent '
+        'access for researchers, historians, scholars, people with '
+        'disabilities, and ' 'the general public to historical '
+        'collections that exist in digital format. The Internet Archive '
+        'includes texts, audio, moving images, '
+        'and software as well as archived web pages, and provides '
+        'specialized services for information access for the blind and '
+        'other persons with disabilities.</p>'
+        '<p>Created with hocr-to-epub (v.%s)</p></div>'
+    ) % __version__
+
+    # define CSS style
+    style = """
+        .center {text-align: center}
+        .sr-only {
+            width: 1px;
+            height: 1px;
+            padding: 0;
+            margin: -1px;
+            overflow: hidden;
+            clip: rect(0,0,0,0);
+            border: 0;
+        }
+        .strong {font-weight: bold;}
+        .italic {font-style: italic;}
+        .serif {font-family: serif;}
+        .sans {font-family: sans-serif;}
+        .big {font-size: 1.5em;}
+        .small {font-size: .75em;}
+        .offset {
+            margin: 1em;
+            padding: 1.5em;
+            border: black 1px solid;
+        }
+        img {
+            padding: 0;
+            margin: 0;
+            max-width: 100%;
+            max-height: 100%;
+            column-count: 1;
+            break-inside: avoid;
+            oeb-column-number: 1;
+        }
+        p {
+            text-indent: 4em;
+        }
+        """
+
+    strip_whitespaces = True
+
+    def __init__(self,
+                 hocr_xml_file_path,
+                 meta_xml_file_path=None,
+                 image_stack_zip_file_path=None,
+                 scandata_xml_file_path=None,
+                 epub_zip_file_path=None):
+
+        # Copy arguments to locals
+        self.hocr_xml_file_path = hocr_xml_file_path
+        self.meta_xml_file_path = meta_xml_file_path
+        self.image_stack_zip_file_path = image_stack_zip_file_path
+        self.scandata_xml_file_path = scandata_xml_file_path
+        self.epub_zip_file_path = epub_zip_file_path
+
+        # Set sensible defaults for arguments that weren't provided
+        if not self.meta_xml_file_path:
+            self.meta_xml_file_path = self.hocr_xml_file_path.replace('_hocr.html', '_meta.xml')
+        if not self.image_stack_zip_file_path:
+            self.image_stack_zip_file_path = self.hocr_xml_file_path.replace('_hocr.html', '_jp2.zip')
+        if not self.scandata_xml_file_path:
+            self.scandata_xml_file_path = self.hocr_xml_file_path.replace('_hocr.html', '_scandata.xml')
+        if not self.epub_zip_file_path:
+            self.epub_zip_file_path = self.hocr_xml_file_path.replace('_hocr.html', '_ebook.epub')
+
+        self.img_stack = ImageStack(self.image_stack_zip_file_path, os.path.join(WORKING_DIR, "epub_img"))
+        try:
+            self.metadata = parse_item_metadata(self.meta_xml_file_path)
+        except:
+            raise RuntimeError("Could not fine _meta.xml file for this item")
+        try:
+            self.skip_pages = scandata_xml_get_skip_pages(self.scandata_xml_file_path)
+        except:
+            self.skip_pages = []
+
+        print("Parsing file %s" % self.hocr_xml_file_path)
+        self.generate()
+        #self.verify()
+
+    def normalize_language(self, language):
+        """
+        Attempt to convert a language tag to a valid country code
+        """
+        try:
+            return iso639.to_iso639_1(language)
+        except:
+            return language
+
+    def set_metadata(self):
+        """
+        Set the metadata on the epub object
+        """
+        self.book.set_identifier(self.metadata['identifier'])
+        if 'language' in self.metadata.keys():
+            if type(self.metadata['language']) is str:
+                self.metadata['language'] = self.normalize_language(self.metadata['language'])
+                self.book.set_language(self.metadata['language'])
+            elif type(self.metadata['language']) is list:
+                self.metadata['language'] = '; '.join(map(self.normalize_language, self.metadata['language']))
+                self.book.set_language(self.metadata['language'])
+        if 'title' in self.metadata.keys():
+            self.book.set_title(self.metadata['title'])
+        if 'creator' in self.metadata.keys():
+            if type(self.metadata['creator']) is str:
+                self.book.add_author(self.metadata['creator'])
+            elif type(self.metadata['creator']) is list:
+                for i, creator in enumerate(self.metadata['creator']):
+                    creator_uid = 'creator_{creator_uid}'.format(creator_uid=i)
+                    self.book.add_author(creator, uid=creator_uid)
+        if 'description' in self.metadata.keys():
+            if type(self.metadata['description']) is str:
+                self.book.add_metadata('DC', 'description', self.metadata['description'])
+            elif type(self.metadata['description']) is list:
+                for description in self.metadata['description']:
+                    self.book.add_metadata('DC', 'description', description)
+        if 'publisher' in self.metadata.keys():
+            if type(self.metadata['publisher']) is str:
+                    self.book.add_metadata('DC', 'publisher', self.metadata['publisher'])
+            elif type(self.metadata['publisher']) is list:
+                for publisher in self.metadata['publisher']:
+                    self.book.add_metadata('DC', 'publisher', publisher)
+        if 'identifier-access' in self.metadata.keys():
+            if type(self.metadata['identifier-access']) is str:
+                self.book.add_metadata(
+                    'DC', 'identifier', 'Access URL: {}'.format(
+                        self.metadata['identifier-access']
+                    )
+                )
+            elif type(self.metadata['identifier-access']) is list:
+                for identifier_access in self.metadata['identifier-access']:
+                    self.book.add_metadata(
+                        'DC', 'identifier', 'Access URL: {}'.format(
+                            identifier_access
+                        )
+                    )
+        if 'identifier-ark' in self.metadata.keys():
+            if type(self.metadata['identifier-ark']) is str:
+                self.book.add_metadata(
+                    'DC', 'identifier', 'urn:ark:{}'.format(self.metadata['identifier-ark'])
+                )
+            elif type(self.metadata['identifier-ark']) is list:
+                for identifier_ark in self.metadata['identifier-ark']:
+                    self.book.add_metadata(
+                        'DC', 'identifier', 'urn:ark:{}'.format(identifier_ark)
+                    )
+        if 'isbn' in self.metadata.keys():
+            if type(self.metadata['isbn']) is str:
+                self.book.add_metadata(
+                    'DC', 'identifier', 'urn:isbn:{}'.format(self.metadata['isbn'])
+                )
+            elif type(self.metadata['isbn']) is list:
+                for isbn in self.metadata['isbn']:
+                    self.book.add_metadata(
+                        'DC', 'identifier', 'urn:isbn:{}'.format(isbn)
+                    )
+        if 'oclc-id' in self.metadata.keys():
+            if type(self.metadata['oclc-id']) is str:
+                self.book.add_metadata(
+                    'DC', 'identifier', 'urn:oclc:{}'.format(self.metadata['oclc-id'])
+                )
+            elif type(self.metadata['oclc-id']) is list:
+                for oclc_id in self.metadata['oclc-id']:
+                    self.book.add_metadata(
+                        'DC', 'identifier', 'urn:oclc:{}'.format(oclc_id)
+                    )
+        if 'external-identifier' in self.metadata.keys():
+            if type(self.metadata['external-identifier']) is str:
+                self.book.add_metadata('DC', 'identifier', self.metadata['external-identifier'])
+            elif type(self.metadata['external-identifier']) is list:
+                for external_identifier in self.metadata['external-identifier']:
+                    self.book.add_metadata('DC', 'identifier', external_identifier)
+        if 'related-external-id' in self.metadata.keys():
+            if type(self.metadata['related-external-id']) is str:
+                self.book.add_metadata('DC', 'identifier', self.metadata['related-external-id'])
+            elif type(self.metadata['related-external-id']) is list:
+                for related_external_id in self.metadata['related-external-id']:
+                    self.book.add_metadata('DC', 'identifier', related_external_id)
+        if 'subject' in self.metadata.keys():
+            if type(self.metadata['subject']) is str:
+                self.book.add_metadata('DC', 'subject', self.metadata['subject'])
+            elif type(self.metadata['subject']) is list:
+                for subject in self.metadata['subject']:
+                    self.book.add_metadata('DC', 'subject', subject)
+        if 'date' in self.metadata.keys():
+            self.book.add_metadata('DC', 'date', self.metadata['date'])
+
+    def set_accessibility_metadata(self):
+        summary = ''
+        # Add the accessibility metadata to the publication
+        summary += (
+            'The publication was generated using automated character '
+            'recognition, therefore it may not be an accurate rendition '
+            'of the original text, and it may not offer the correct '
+            'reading sequence.'
+        )
+
+        modes = []
+        modes_sufficient = []
+        if self.has_text:
+            modes.append('textual')
+            modes_sufficient.append('textual')
+        if self.has_images:
+            modes.append('visual')
+            modes_sufficient.append('visual')
+            summary += ' This publication is missing meaningful alternative text.'
+
+        summary += ' The publication otherwise meets WCAG 2.0 Level A.'
+
+        self.book.add_metadata(
+            None,
+            'meta',
+            summary,
+            OrderedDict([('property', 'schema:accessibilitySummary')])
+        )
+
+        for mode in modes:
+            self.book.add_metadata(
+                None,
+                'meta',
+                mode,
+                OrderedDict([('property', 'schema:accessMode')])
+            )
+
+        for mode in modes_sufficient:
+            self.book.add_metadata(
+                None,
+                'meta',
+                mode,
+                OrderedDict([('property', 'schema:accessModeSufficient')])
+            )
+
+        features = ['none', ]
+        for feature in features:
+            self.book.add_metadata(
+                None,
+                'meta',
+                feature,
+                OrderedDict([('property', 'schema:accessibilityFeature')])
+            )
+
+        # these states will be true for any static content,  which we know
+        # is guaranteed for OCR generated texts.
+        hazards = [
+            'noFlashingHazard',
+            'noMotionSimulationHazard',
+            'noSoundHazard',
+        ]
+        controls = [
+            'fullKeyboardControl',
+            'fullMouseControl',
+            'fullSwitchControl',
+            'fullTouchControl',
+            'fullVoiceControl',
+        ]
+
+        for hazard in hazards:
+            self.book.add_metadata(
+                None,
+                'meta',
+                hazard,
+                OrderedDict([('property', 'schema:accessibilityHazard')])
+            )
+        for control in controls:
+            self.book.add_metadata(
+                None,
+                'meta',
+                control,
+                OrderedDict([('property', 'schema:accessibilityControl')])
+            )
+
+
+    def generate(self, confidence_threshold=75.0):
+        self.book = epub.EpubBook()
+        self.book.reset()
+        self.set_metadata()
+
+        css_file = epub.EpubItem(
+            uid="style_nav",
+            file_name="style/style.css",
+            media_type="text/css",
+            content=self.style
+        )
+        self.book.add_item(css_file)
+
+        front_matter_epub = epub.EpubHtml(title='Notice', file_name='notice.html', lang='en')
+        front_matter_epub.set_content(self.front_matter)
+
+        pages_hocr = hocr.parse.hocr_page_iterator(self.hocr_xml_file_path)
+        pages_epub = []
+        pages_epub.append(front_matter_epub)
+
+        # Iterate all the pages
+        images_found = 0
+        words_found = 0
+        for page_idx, page in enumerate(pages_hocr):
+            if page_idx in self.skip_pages:
+                continue
+            # Get all the words on the page
+            word_data = hocr.parse.hocr_page_to_word_data(page)
+
+            # Get all the photos on the page
+            photo_boxes = hocr.parse.hocr_page_to_photo_data(page)
+
+            page_content = []
+            page_confidence = 0
+            words_on_page = 0
+            # ABBYY converter sometimes identifies linebreaks as a negation sign
+            hyphens = ['-', '¬']
+            # Combine all all the words on the page
+            for element in word_data:
+                line_content = []
+                for line in element['lines']:
+                    for word in line['words']:
+                        # Save text data
+                        text = word['text']
+                        if self.strip_whitespaces:
+                            text = text.strip()
+                        line_content.append(text)
+
+                        # Count word confidence scores
+                        page_confidence += word['confidence']
+                        words_found += 1
+                        words_on_page += 1
+                    # Examine the last character of of the last element of the line
+                    if len(line_content) and len(line_content[-1]) and line_content[-1][-1] in hyphens:
+                        # Remove the last character if it is a hyphen
+                        line_content[-1] = line_content[-1][:-1]
+                        # Add placeholder value
+                        line_content.append('\x7f')
+                page_content += line_content
+
+            # Flatten list into string and add spaces
+            page_text = ' '.join(page_content)
+            # Remove placeholder and spaces in the positions that previously had a line break hyphen
+            page_text = page_text.replace(' \x7f ', '')
+            # Create HTML/epub page
+            page_html = u"<p>%s</p>" % page_text
+
+            # Add a warning if the confidence in the text is below the given threshold
+            if words_on_page:
+                page_confidence = page_confidence/words_on_page
+                if page_confidence < confidence_threshold:
+                    page_html = (u"<b>The text on this page is estimated to be only %0.02f%% accurate</b>" % page_confidence) + page_html
+
+            # Add all the images from the page
+            images_on_page = 0
+            for image_idx, box in enumerate(photo_boxes):
+                cropped_image_filename = self.img_stack.crop_image(page_idx, box)
+                cropped_jpeg_data = open(cropped_image_filename, "rb").read()
+
+                image_filename_epub = "image_%04u_%02u.jpeg" % (page_idx, image_idx)
+                image_epub = epub.EpubImage()
+                image_epub.file_name = image_filename_epub
+                image_epub.media_type = "image/jpeg"
+                image_epub.set_content(cropped_jpeg_data)
+
+                self.book.add_item(image_epub)
+                page_html += "<img src=\"%s\" alt=\"Image %u\"/>" % (image_filename_epub, images_found)
+                images_found += 1
+                images_on_page += 1
+
+            if words_on_page or images_on_page:
+                page_epub = epub.EpubHtml(title='Page %s' % page_idx,
+                                          file_name='page_%s.html' % page_idx,
+                                          lang=self.metadata['language'])
+                page_epub.add_link(
+                    href='style/style.css', rel='stylesheet', type='text/css'
+                )
+                page_epub.set_content(page_html)
+                pages_epub.append(page_epub)
+
+        # Apply some transformations to remove headings and page numbers
+        # TODO
+        #for page_epub in pages_epub:
+        #    print(page_epub.get_body_content())
+
+        # Add all the pages to the book
+        for page_epub in pages_epub:
+            self.book.add_item(page_epub)
+
+        self.has_text = words_found > 0
+        self.has_images = images_found > 0
+        self.set_accessibility_metadata()
+
+        # We don't have enough information to create TOC/chapters/sections yet
+        #book.toc = pages_epub
+        self.book.add_item(epub.EpubNcx())
+        self.book.add_item(epub.EpubNav())
+        self.book.spine = ['cover', 'nav', ] + pages_epub
+        epub.write_epub(self.epub_zip_file_path, self.book, {})
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description='hOCR to ePUB converter')
+
+    parser.add_argument('-f', '--infile', help='Item _hocr.html file',
+                        type=str, default=None)
+    parser.add_argument('-o', '--outfile', help='Output _ebook.epub file',
+                        type=str, default=None)
+    parser.add_argument('-m', '--metafile', help='Item _meta.xml file',
+                        type=str, default=None)
+    parser.add_argument('-i', '--imagestack', help='Item _jp2.zip file',
+                        type=str, default=None)
+    parser.add_argument('-s', '--scandata', help='Item _scandata.xml file',
+                        type=str, default=None)
+    parser.add_argument('-w', '--workingdir', help='Directory used for temp files',
+                        type=str, default=None)
+    args = parser.parse_args()
+
+    if not args.infile:
+        raise Exception("Must provide hOCR input file with -f")
+
+    # Allow external caller to override working directory from default /tmp/ or /var/tmp/fast/
+    if args.workingdir:
+        WORKING_DIR = args.workingdir
+
+    EpubGenerator(args.infile, args.metafile, args.imagestack, args.scandata, args.outfile)
+
