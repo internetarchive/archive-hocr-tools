@@ -32,4 +32,7 @@ setup(name='archive-hocr-tools',
       python_requires='>=3.6',
       include_package_data=True,
       install_requires=['lxml'],
+      extras_require={
+          'epub': ['ebooklib==0.17.1'],
+      },
       package_data={'hocr': ['data/*']})
