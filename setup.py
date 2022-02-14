@@ -34,6 +34,6 @@ setup(name='archive-hocr-tools',
       include_package_data=True,
       install_requires=['lxml'],
       extras_require={
-          'epub': ['ebooklib==0.17.1'],
+          'epub': ['ebooklib==0.17.1', 'internetarchive-deriver-module==1.0.1'],
       },
       package_data={'hocr': ['data/*']})
