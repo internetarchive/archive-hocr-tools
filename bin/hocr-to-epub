@@ -6,9 +6,16 @@ from collections import OrderedDict
 
 import hocr.parse
 from ebooklib import epub
-from derivermodule.metadata import parse_item_metadata
 
-from internetarchivepdf.scandata import *
+try:
+    from derivermodule.metadata import parse_item_metadata
+    from derivermodule.scandata import scandata_xml_get_skip_pages
+except:
+    # This is ok, just don't support _meta.xml and _scandata.xml
+    # Just error later on when/if the files are actually being passed
+    parse_item_metadata = None
+    scandata_xml_get_skip_pages = None
+
 import iso639
 
 from PIL import Image
@@ -205,19 +212,25 @@ class EpubGenerator(object):
         if not self.epub_zip_file_path:
             self.epub_zip_file_path = self.hocr_xml_file_path.replace('_hocr.html', '_ebook.epub')
 
-        self.img_stack = ImageStack(self.image_stack_zip_file_path, os.path.join(WORKING_DIR, "epub_img"))
-        try:
+        # We can still make an epub without any of these if we must
+        # Try to find metadata
+        if os.path.exists(self.meta_xml_file_path) and parse_item_metadata is not None:
             self.metadata = parse_item_metadata(self.meta_xml_file_path)
-        except:
-            raise RuntimeError("Could not fine _meta.xml file for this item")
-        try:
+        else:
+            self.metadata = {}
+        # Try to find jp2.zip
+        if os.path.exists(self.image_stack_zip_file_path):
+            self.img_stack = ImageStack(self.image_stack_zip_file_path, os.path.join(WORKING_DIR, "epub_img"))
+        else:
+            self.img_stack = None
+        # Try to find scandata
+        if os.path.exists(self.scandata_xml_file_path) and scandata_xml_get_skip_pages is not None:
             self.skip_pages = scandata_xml_get_skip_pages(self.scandata_xml_file_path)
-        except:
+        else:
             self.skip_pages = []
 
         print("Parsing file %s" % self.hocr_xml_file_path)
         self.generate()
-        #self.verify()
 
     def normalize_language(self, language):
         """
@@ -414,7 +427,10 @@ class EpubGenerator(object):
     def generate(self, confidence_threshold=75.0):
         self.book = epub.EpubBook()
         self.book.reset()
-        self.set_metadata()
+        try:
+            self.set_metadata()
+        except:
+            pass
 
         css_file = epub.EpubItem(
             uid="style_nav",
@@ -504,7 +520,11 @@ class EpubGenerator(object):
             if words_on_page or images_on_page:
                 page_epub = epub.EpubHtml(title='Page %s' % page_idx,
                                           file_name='page_%s.html' % page_idx,
-                                          lang=self.metadata['language'])
+                                          )
+                if 'language' in self.metadata.keys():
+                    page_epub.set_language(self.metadata['language'])
+                else:
+                    page_epub.set_language('None')
                 page_epub.add_link(
                     href='style/style.css', rel='stylesheet', type='text/css'
                 )
