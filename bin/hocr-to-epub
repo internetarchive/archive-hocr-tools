@@ -9,12 +9,12 @@ from ebooklib import epub
 
 try:
     from derivermodule.metadata import parse_item_metadata
-    from derivermodule.scandata import scandata_xml_get_skip_pages
+    from derivermodule.scandata import scandata_parse, scandata_get_skip_pages
 except:
     # This is ok, just don't support _meta.xml and _scandata.xml
     # Just error later on when/if the files are actually being passed
     parse_item_metadata = None
-    scandata_xml_get_skip_pages = None
+    scandata_get_skip_pages = None
 
 import iso639
 
@@ -224,8 +224,9 @@ class EpubGenerator(object):
         else:
             self.img_stack = None
         # Try to find scandata
-        if os.path.exists(self.scandata_xml_file_path) and scandata_xml_get_skip_pages is not None:
-            self.skip_pages = scandata_xml_get_skip_pages(self.scandata_xml_file_path)
+        if os.path.exists(self.scandata_xml_file_path) and scandata_get_skip_pages is not None:
+            self.scandata = scandata_parse(self.scandata_xml_file_path)
+            self.skip_pages = scandata_get_skip_pages(self.scandata)
         else:
             self.skip_pages = []
 
@@ -245,7 +246,8 @@ class EpubGenerator(object):
         """
         Set the metadata on the epub object
         """
-        self.book.set_identifier(self.metadata['identifier'])
+        if 'identifier' in self.metadata.keys():
+            self.book.set_identifier(self.metadata['identifier'])
         if 'language' in self.metadata.keys():
             if type(self.metadata['language']) is str:
                 self.metadata['language'] = self.normalize_language(self.metadata['language'])
@@ -427,10 +429,7 @@ class EpubGenerator(object):
     def generate(self, confidence_threshold=75.0):
         self.book = epub.EpubBook()
         self.book.reset()
-        try:
-            self.set_metadata()
-        except:
-            pass
+        self.set_metadata()
 
         css_file = epub.EpubItem(
             uid="style_nav",
