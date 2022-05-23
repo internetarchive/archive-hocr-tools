@@ -23,7 +23,7 @@ setup(name='archive-hocr-tools',
                'bin/hocr-lookup-create', 'bin/hocr-lookup-reconstruct',
                'bin/hocr-text-paragraphs', 'bin/hocr-extract-page',
                'bin/abbyy-to-hocr', 'bin/hocr-split-pages',
-               'bin/hocr-to-epub'],
+               'bin/hocr-to-epub', 'bin/pdf-to-hocr'],
       classifiers=[
           'Development Status :: 3 - Alpha',
           'Intended Audience :: Developers',
@@ -35,5 +35,6 @@ setup(name='archive-hocr-tools',
       install_requires=['lxml'],
       extras_require={
           'epub': ['ebooklib==0.17.1', 'internetarchive-deriver-module==1.0.1', 'iso639==0.1.4'],
+          'pdf': ['PyMuPDF==1.19.2', 'numpy==1.21.3'],
       },
       package_data={'hocr': ['data/*']})
