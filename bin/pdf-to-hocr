@@ -162,6 +162,10 @@ def pdf_process_text_block(pageno, block, parent_block, scaler=lambda x: x):
 
 def get_bbox(bbox_data, scaler):
     d = [int(scaler(x)) for x in bbox_data]
+    # TODO: report on negative bboxes
+    for v in d:
+        if v < 0:
+            print('Negative bounding box component: %d' % v, file=sys.stderr)
     d = [x if x > 0 else 0 for x in d]
     d = [str(x) for x in d]
     return d
@@ -277,10 +281,9 @@ def pdf_page_to_hocr_page(page, page_metadata, pageno=None):
     kv['image'] = 'todo://todo' # TODO: some image path?
     #kv['image'] = 'https://archive.org/todo' # TODO: some image path?
 
-    # TODO
     dpi = int(page_metadata['estimated_dpi'])
     scaler = lambda x: int(x * page_metadata['estimated_scale'])
-    #dpi = 300
+
     kv['scan_res'] = '%d %d' % (dpi, dpi)
 
     pageelem = etree.Element('div', attrib={'class': 'ocr_page',
