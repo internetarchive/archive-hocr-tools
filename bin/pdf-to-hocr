@@ -281,7 +281,7 @@ def pdf_page_to_hocr_page(page, page_metadata, pageno=None):
     kv['image'] = 'todo://todo' # TODO: some image path?
     #kv['image'] = 'https://archive.org/todo' # TODO: some image path?
 
-    dpi = int(page_metadata['estimated_dpi'])
+    dpi = int(page_metadata['estimated_ppi'])
     scaler = lambda x: int(x * page_metadata['estimated_scale'])
 
     kv['scan_res'] = '%d %d' % (dpi, dpi)
