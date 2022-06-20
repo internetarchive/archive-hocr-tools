@@ -262,9 +262,19 @@ def pdf_process_characters(pageno, line, lineelem, scaler):
 
 
 def pdf_page_to_hocr_page(page, page_metadata, pageno=None):
-    pagedata = page.get_text(option='rawdict')
-    # TODO: left to right, right to left
+    flgs = fitz.TEXT_PRESERVE_WHITESPACE | \
+            fitz.TEXT_PRESERVE_LIGATURES | \
+            fitz.TEXT_PRESERVE_IMAGES
 
+    # This would be nice, but it does mess with the bbox of the text, so better
+    # not for now, until we do more research
+    #flgs |= fitz.TEXT_DEHYPHENATE
+
+    # Image decoding slows things down tremendously, so let's not do it - it has
+    # no effect on the text layer extraction
+    flgs &= ~fitz.TEXT_PRESERVE_IMAGES
+
+    pagedata = page.get_text(option='rawdict', flags=flgs)
 
     width, height = page_metadata['estimated_default_render_res'][2:]
 
