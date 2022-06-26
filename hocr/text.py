@@ -1,8 +1,7 @@
 import xml.parsers.expat
 
 from .util import open_if_required
-from .parse import hocr_page_to_word_data, hocr_page_to_word_data_fast, \
-        hocr_page_iterator, hocr_page_get_dimensions
+from .parse import hocr_page_to_word_data_fast, hocr_page_iterator
 
 
 def hocr_paragraph_text(paragraph):
