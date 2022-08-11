@@ -193,6 +193,9 @@ def find_matches(lookup_table, hocrfp, text, es_whitespace_fixup_required=False)
     page_number = 0
 
     if es_whitespace_fixup_required:
+        if not text.endswith('\n'):
+            text += '\n'
+
         # There might be faster ways of doing this (e.g. read the _searchtext
         # file and count the amount of 'whitespace' bytes)
         done = False
@@ -204,7 +207,7 @@ def find_matches(lookup_table, hocrfp, text, es_whitespace_fixup_required=False)
             for line in page_text:
                 if line.strip() == '':
                     # Add counted bytes, one for newline
-                    text_byte_count += len(line) + 1
+                    text_byte_count += len(line)
                     continue
                 else:
                     done = True
