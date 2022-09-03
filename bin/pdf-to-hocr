@@ -15,6 +15,12 @@ from hocr.util import open_if_required
 import numpy as np
 
 
+SALVAGE_TEXT_ENCODING = False
+ERROR_UNREPRESENTABLE_PRINTED = False
+ERROR_UNICODE_ENCODE_ERROR_PRINTED = False
+ERROR_NEGATIVE_BOUNDING_BOX_PRINTED = False
+
+
 # Functions related to unique id="" generation
 def page_id(pageno):
     check_page_reset(pageno)
@@ -161,11 +167,15 @@ def pdf_process_text_block(pageno, block, parent_block, scaler=lambda x: x):
 
 
 def get_bbox(bbox_data, scaler):
+    global ERROR_NEGATIVE_BOUNDING_BOX_PRINTED
+
     d = [int(scaler(x)) for x in bbox_data]
     # TODO: report on negative bboxes
     for v in d:
         if v < 0:
-            print('Negative bounding box component: %d' % v, file=sys.stderr)
+            if not ERROR_NEGATIVE_BOUNDING_BOX_PRINTED:
+                print('Negative bounding box component: %d (silencing similar errors)' % v, file=sys.stderr)
+                ERROR_NEGATIVE_BOUNDING_BOX_PRINTED = True
     d = [x if x > 0 else 0 for x in d]
     d = [str(x) for x in d]
     return d
@@ -192,6 +202,9 @@ def pdf_process_characters(pageno, line, lineelem, scaler):
     Process spans in a line, searching for spaces so that we can split the
     characters into words.
     """
+    global ERROR_UNICODE_ENCODE_ERROR_PRINTED
+    global ERROR_UNREPRESENTABLE_PRINTED
+
     wordelem = etree.Element('span', attrib={'class': 'ocrx_word'})
     charelem = None
     word_start = True
@@ -201,11 +214,18 @@ def pdf_process_characters(pageno, line, lineelem, scaler):
     all_wordchar_bboxes = []
 
     for span in line['spans']:
-        for char in span['chars']:
+        skip_next = False
+        for idx, char in enumerate(span['chars']):
+            if skip_next:
+                skip_next = False
+                continue
+
             # TODO: What do we do with multiple spaces after each other?
             # I guess if there's more than one we could consider adding them to
             # the word, but I think it's better to just ignore them for hOCR
-            # data purposes.
+            # data purposes (we want to be able to search the text, we don't
+            # care so much about extracting all the data, including invalid
+            # data)
             if char['c'] == ' ':
                 if len(wordchar_bboxes) == 0:
                     # multiple repeating spaces
@@ -228,7 +248,44 @@ def pdf_process_characters(pageno, line, lineelem, scaler):
             found_any = True
 
             charelem = etree.Element('span', attrib={'class': 'ocrx_cinfo'})
-            charelem.text = char['c']
+            try:
+                char_is_set = False
+
+                c1 = char['c']
+                if ord(c1) in (0xFFFD, 0xFFFE, 0xFFFF):
+                    if not ERROR_UNREPRESENTABLE_PRINTED:
+                        ERROR_UNREPRESENTABLE_PRINTED = True
+                        print('Skipping char which we cannot represent: %s (silencing similar errors)' % hex(ord(c1)), file=sys.stderr)
+                    continue
+
+                if SALVAGE_TEXT_ENCODING:
+                    # Try to interpret UTF16 surrogate pairs
+                    if ord(c1) >= 0xd800 and ord(c1) <= 0xdbff:
+                        if idx+1 < len(span['chars']):
+                            c2 = span['chars'][idx+1]['c']
+                            if ord(c2) >= 0xdc00 and ord(c2) <= 0xdfff:
+                                c = chr(0x10000 + ((ord(c1) - 0xd800) << 10) + (ord(c2) - 0xdc00))
+                                skip_next = True
+                                char_is_set = True
+
+                                charelem.text = c
+                            else:
+                                raise Exception('This should be unreachable')
+
+                if not char_is_set:
+                    charelem.text = c1
+
+            except UnicodeEncodeError as e:
+                if not ERROR_UNICODE_ENCODE_ERROR_PRINTED:
+                    print('Skipping char %s, error: "%s" (silencing similar errors)' % (hex(ord(c1)), e), file=sys.stderr)
+                    ERROR_UNICODE_ENCODE_ERROR_PRINTED = True
+                #print('Chars:', span['chars'], file=sys.stderr)
+                #print('Chars:', ''.join([x['c'] for x in span['chars']]), file=sys.stderr)
+                continue
+            except ValueError as e:
+                # ValueError, "All strings must be XML compatible: Unicode or ASCII, no NULL bytes or control characters"
+                print('Skipping char (\'%s\'), error: "%s"' % (hex(ord(char['c'])), e), file=sys.stderr)
+                continue
 
             conf = float(100)
 
@@ -355,6 +412,12 @@ if __name__ == '__main__':
                         type=str, default=None)
     parser.add_argument('-J', '--json-metadata-file', help='Input json metadata file',
                         type=str, default=None)
+    parser.add_argument('--salvage-text', help='Attempt to recover/salvage '
+                        'broken text layers', action='store_true',
+                        default=False)
+
     args = parser.parse_args()
+
+    SALVAGE_TEXT_ENCODING = args.salvage_text
 
     process_files(args.infile, args.json_metadata_file)
