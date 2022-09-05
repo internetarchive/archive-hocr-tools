@@ -19,6 +19,7 @@ SALVAGE_TEXT_ENCODING = False
 ERROR_UNREPRESENTABLE_PRINTED = False
 ERROR_UNICODE_ENCODE_ERROR_PRINTED = False
 ERROR_NEGATIVE_BOUNDING_BOX_PRINTED = False
+ERROR_VALUE_ERROR_CHAR_NOT_XML_COMPAT_PRINTED = False
 
 
 # Functions related to unique id="" generation
@@ -204,6 +205,8 @@ def pdf_process_characters(pageno, line, lineelem, scaler):
     """
     global ERROR_UNICODE_ENCODE_ERROR_PRINTED
     global ERROR_UNREPRESENTABLE_PRINTED
+    global ERROR_NEGATIVE_BOUNDING_BOX_PRINTED
+    global ERROR_VALUE_ERROR_CHAR_NOT_XML_COMPAT_PRINTED
 
     wordelem = etree.Element('span', attrib={'class': 'ocrx_word'})
     charelem = None
@@ -284,7 +287,10 @@ def pdf_process_characters(pageno, line, lineelem, scaler):
                 continue
             except ValueError as e:
                 # ValueError, "All strings must be XML compatible: Unicode or ASCII, no NULL bytes or control characters"
-                print('Skipping char (\'%s\'), error: "%s"' % (hex(ord(char['c'])), e), file=sys.stderr)
+                if not ERROR_VALUE_ERROR_CHAR_NOT_XML_COMPAT_PRINTED:
+                    print('Skipping char (\'%s\'), error: "%s" (silencing similar errors)' % (hex(ord(char['c'])), e), file=sys.stderr)
+                    ERROR_VALUE_ERROR_CHAR_NOT_XML_COMPAT_PRINTED = True
+
                 continue
 
             conf = float(100)
