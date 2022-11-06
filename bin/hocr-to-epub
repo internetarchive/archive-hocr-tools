@@ -113,7 +113,7 @@ class ImageStack(object):
 
 class EpubGenerator(object):
 
-    __version__ = '0.0.1'
+    __version__ = '1.0.0'
 
     front_matter = (
         '<div class="offset">'
