@@ -90,8 +90,11 @@ class ImageStack(object):
         #fh = self.zf.open(self.filenames[page])
         img = Image.open(tempfile_tiff)
         #img = Image.open(fh)
-        region = img.crop(box)
-        region.save(output_filename)
+        if box:
+            region = img.crop(box)
+            region.save(output_filename)
+        else:
+            img.save(output_filename)
         #fh.close()
         img.close()
         return output_filename
@@ -506,13 +509,11 @@ class EpubGenerator(object):
             # Add all the images from the page
             images_on_page = 0
             for image_idx, box in enumerate(photo_boxes):
-                cropped_image_filename = self.img_stack.crop_image(page_idx, box)
-                cropped_jpeg_data = open(cropped_image_filename, "rb").read()
-                image_filename_epub = "image_%04u_%02u.jpeg" % (page_idx, image_idx)
-                # Treat cover image as special case
-                if page_idx in self.cover_pages and not next(self.book.get_items_of_type(ITEM_COVER), None):
-                    self.book.set_cover(image_filename_epub, cropped_jpeg_data)
-                else:
+                # Treat first cover image as special case
+                if page_idx not in self.cover_pages[:1]:
+                    cropped_image_filename = self.img_stack.crop_image(page_idx, box)
+                    cropped_jpeg_data = open(cropped_image_filename, "rb").read()
+                    image_filename_epub = "image_%04u_%02u.jpeg" % (page_idx, image_idx)
                     image_epub = epub.EpubImage()
                     image_epub.file_name = image_filename_epub
                     image_epub.media_type = "image/jpeg"
@@ -549,6 +550,12 @@ class EpubGenerator(object):
         self.has_text = words_found > 0
         self.has_images = images_found > 0
         self.set_accessibility_metadata()
+
+        # Set cover
+        if len(self.cover_pages):
+            image_filename = self.img_stack.crop_image(self.cover_pages[0], None)
+            jpeg_data = open(image_filename, "rb").read()
+            self.book.set_cover("cover.jpeg", jpeg_data)
 
         # We don't have enough information to create TOC/chapters/sections yet
         #book.toc = pages_epub
