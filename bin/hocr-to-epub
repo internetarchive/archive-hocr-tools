@@ -4,16 +4,17 @@ import argparse
 from collections import OrderedDict
 
 import hocr.parse
-from ebooklib import epub
+from ebooklib import epub, ITEM_COVER
 
 try:
     from derivermodule.metadata import parse_item_metadata
-    from derivermodule.scandata import scandata_parse, scandata_get_skip_pages
+    from derivermodule.scandata import scandata_parse, scandata_get_skip_pages, scandata_get_pagetype_pages
 except:
     # This is ok, just don't support _meta.xml and _scandata.xml
     # Just error later on when/if the files are actually being passed
-    parse_item_metadata = None
-    scandata_get_skip_pages = None
+    parse_item_metadata         = None
+    scandata_get_skip_pages     = None
+    scandata_get_pagetype_pages = None
 
 import iso639
 
@@ -223,11 +224,15 @@ class EpubGenerator(object):
         else:
             self.img_stack = None
         # Try to find scandata
-        if os.path.exists(self.scandata_xml_file_path) and scandata_get_skip_pages is not None:
-            self.scandata = scandata_parse(self.scandata_xml_file_path)
-            self.skip_pages = scandata_get_skip_pages(self.scandata)
+        if os.path.exists(self.scandata_xml_file_path) \
+        and scandata_get_skip_pages is not None \
+        and scandata_get_pagetype_pages is not None:
+            self.scandata    = scandata_parse(self.scandata_xml_file_path)
+            self.skip_pages  = scandata_get_skip_pages(self.scandata)
+            self.cover_pages = scandata_get_pagetype_pages(self.scandata, 'Cover')
         else:
             self.skip_pages = []
+            self.cover_pages = []
 
         print("Parsing file %s" % self.hocr_xml_file_path)
         self.generate()
@@ -503,17 +508,20 @@ class EpubGenerator(object):
             for image_idx, box in enumerate(photo_boxes):
                 cropped_image_filename = self.img_stack.crop_image(page_idx, box)
                 cropped_jpeg_data = open(cropped_image_filename, "rb").read()
-
                 image_filename_epub = "image_%04u_%02u.jpeg" % (page_idx, image_idx)
-                image_epub = epub.EpubImage()
-                image_epub.file_name = image_filename_epub
-                image_epub.media_type = "image/jpeg"
-                image_epub.set_content(cropped_jpeg_data)
+                # Treat cover image as special case
+                if page_idx in self.cover_pages and not next(self.book.get_items_of_type(ITEM_COVER), None):
+                    self.book.set_cover(image_filename_epub, cropped_jpeg_data)
+                else:
+                    image_epub = epub.EpubImage()
+                    image_epub.file_name = image_filename_epub
+                    image_epub.media_type = "image/jpeg"
+                    image_epub.set_content(cropped_jpeg_data)
 
-                self.book.add_item(image_epub)
-                page_html += "<img src=\"%s\" alt=\"Image %u\"/>" % (image_filename_epub, images_found)
-                images_found += 1
-                images_on_page += 1
+                    self.book.add_item(image_epub)
+                    page_html += "<img src=\"%s\" alt=\"Image %u\"/>" % (image_filename_epub, images_found)
+                    images_found += 1
+                    images_on_page += 1
 
             if words_on_page or images_on_page:
                 page_epub = epub.EpubHtml(title='Page %s' % page_idx,
