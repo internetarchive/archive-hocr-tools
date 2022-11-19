@@ -4,6 +4,7 @@ import argparse
 from collections import OrderedDict
 
 import hocr.parse
+import hocr.util
 from ebooklib import epub, ITEM_COVER
 
 try:
@@ -23,6 +24,10 @@ import zipfile
 import os
 import shutil
 import subprocess
+
+OCR_SYSTEM_TESSERACT = 'Tesseract'
+OCR_SYSTEM_ABBYY = 'ABBYY'
+OCR_SYSTEM_UNKNOWN = 'Unknown'
 
 if os.path.exists('/var/tmp/fast'):
     WORKING_DIR = '/var/tmp/fast/'
@@ -433,7 +438,7 @@ class EpubGenerator(object):
             )
 
 
-    def generate(self, confidence_threshold=75.0):
+    def generate(self, warn_confidence_threshold=75.0, remove_confidence_threshold=None):
         self.book = epub.EpubBook()
         self.book.reset()
         self.set_metadata()
@@ -448,6 +453,28 @@ class EpubGenerator(object):
 
         front_matter_epub = epub.EpubHtml(title='Notice', file_name='notice.html', lang='en')
         front_matter_epub.set_content(self.front_matter)
+
+        ocr_system = None
+
+        hocr_ocr_system = hocr.util.get_ocr_system(hocr.util.open_if_required(self.hocr_xml_file_path)) or ''
+        hocr_ocr_system = hocr_ocr_system.lower()
+
+        if 'tesseract' in hocr_ocr_system:
+            ocr_system = OCR_SYSTEM_TESSERACT
+            warning_confidence_threshold = 50
+            #remove_confidence_threshold = 30
+            remove_confidence_threshold = None
+        elif 'abbyy' in hocr_ocr_system or 'luratech' in hocr_ocr_system:
+            ocr_system = OCR_SYSTEM_ABBYY
+            warning_confidence_threshold = 30
+            #remove_confidence_threshold = 20
+            remove_confidence_threshold = None
+        else:
+            ocr_system = OCR_SYSTEM_UNKNOWN
+            warning_confidence_threshold = 50
+            remove_confidence_threshold = None
+
+        print('Detected OCR system:', ocr_system)
 
         pages_hocr = hocr.parse.hocr_page_iterator(self.hocr_xml_file_path)
         pages_epub = []
@@ -503,7 +530,12 @@ class EpubGenerator(object):
             # Add a warning if the confidence in the text is below the given threshold
             if words_on_page:
                 page_confidence = page_confidence/words_on_page
-                if page_confidence < confidence_threshold:
+
+                if remove_confidence_threshold and page_confidence < remove_confidence_threshold:
+                    print('Skipping page due to low confidence: %0.02f%%' % page_confidence)
+                    continue
+                if page_confidence < warning_confidence_threshold:
+                    print('Warning for page due to low confidence: %.02f%%' % page_confidence)
                     page_html = (u"<b>The text on this page is estimated to be only %0.02f%% accurate</b>" % page_confidence) + page_html
 
             # Add all the images from the page
