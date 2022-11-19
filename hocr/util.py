@@ -1,4 +1,5 @@
 import gzip
+import io
 
 from lxml import etree
 
@@ -20,6 +21,34 @@ def open_if_required(fd_or_path):
         xml_file = fd_or_path
 
     return xml_file
+
+
+def get_ocr_system(fd):
+    """
+    Read the ocr-system meta tag from a new file descriptor containing a hOCR
+    document. If you want to use an existing file descriptor, ensure to seek to
+    the start first.
+
+    Args:
+
+    * fd: Open file descriptor
+
+    Return:
+
+    * string of the content system or None if none is specified
+    """
+    header, footer = get_header_footer(fd)
+
+    bio = io.BytesIO()
+    bio.write(header + footer)
+    bio.seek(0)
+
+    parse = etree.iterparse(bio, tag=(HOCR_SCHEMA+'meta',), events=('end',))
+    for (start_end, element) in parse:
+        if element.attrib.get('name') == 'ocr-system':
+            return element.attrib.get('content')
+
+    return None
 
 
 def get_header_footer(fd):
