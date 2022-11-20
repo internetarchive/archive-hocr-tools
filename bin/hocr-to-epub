@@ -124,7 +124,8 @@ class ImageStack(object):
         # Clean up temporary files
         try:
             shutil.rmtree(self.tempdir_zip)
-            os.unlink(self.tempfile_jp2)
+            if self.tempfile_jp2 and os.path.exists(self.tempfile_jp2):
+                os.unlink(self.tempfile_jp2)
             for tempfile in self.temp_files:
                 os.unlink(tempfile)
         except:
