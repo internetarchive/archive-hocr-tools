@@ -38,11 +38,12 @@ class ImageStack(object):
     filenames = []
     images_per_page = {}
     temp_files = []
-    def __init__(self, image_archive_file_path, output_basename):
+    def __init__(self, image_archive_file_path, output_basename, use_kakadu=False):
         self.output_basename = output_basename
         self.image_archive_file_path = image_archive_file_path
         self.tempdir_zip   = os.path.join(WORKING_DIR, 'kakadu_input')
         self.tempfile_jp2  = os.path.join(WORKING_DIR, 'temp.jp2')
+        self.use_kakadu = use_kakadu
         self.parse_zip()
 
     def parse_zip(self):
@@ -72,24 +73,34 @@ class ImageStack(object):
         if tempfile_tiff not in self.temp_files:
             self.zf.extract(self.filenames[page], self.tempdir_zip)
             extracted_file_path = os.path.join(self.tempdir_zip, self.filenames[page])
-            os.rename(extracted_file_path, self.tempfile_jp2)
 
-            cmd = [
-                'kdu_expand',
-                '-num_threads', str(1),
-                '-i', self.tempfile_jp2,
-                '-o', tempfile_tiff
-            ]
-            try:
-                subprocess.run(
-                    cmd, stdout=subprocess.DEVNULL, check=True
-                )
-            except subprocess.CalledProcessError as e:
-                raise RuntimeError(
-                    "Can't convert JP2 to TIFF: {}".format(e)
-                )
+            # TODO: Just use Pillow here, before the rename even
+            if self.use_kakadu:
+                os.rename(extracted_file_path, self.tempfile_jp2)
+
+                cmd = [
+                    'kdu_expand',
+                    '-num_threads', str(1),
+                    '-i', self.tempfile_jp2,
+                    '-o', tempfile_tiff
+                ]
+                try:
+                    subprocess.run(
+                        cmd, stdout=subprocess.DEVNULL, check=True
+                    )
+                except subprocess.CalledProcessError as e:
+                    raise RuntimeError(
+                        "Can't convert JP2 to TIFF: {}".format(e)
+                    )
+            else:
+                i = Image.open(extracted_file_path)
+                i.save(tempfile_tiff, compression=None)
+                del i
+                os.remove(extracted_file_path)
+
             # Keep track of the temp files so we can delete them later
             self.temp_files.append(tempfile_tiff)
+
         self.temp_files.append(output_filename)
 
         #fh = self.zf.open(self.filenames[page])
@@ -201,7 +212,8 @@ class EpubGenerator(object):
                  meta_xml_file_path=None,
                  image_stack_zip_file_path=None,
                  scandata_xml_file_path=None,
-                 epub_zip_file_path=None):
+                 epub_zip_file_path=None,
+                 use_kakadu=False):
 
         # Copy arguments to locals
         self.hocr_xml_file_path = hocr_xml_file_path
@@ -228,7 +240,7 @@ class EpubGenerator(object):
             self.metadata = {}
         # Try to find jp2.zip
         if os.path.exists(self.image_stack_zip_file_path):
-            self.img_stack = ImageStack(self.image_stack_zip_file_path, os.path.join(WORKING_DIR, "epub_img"))
+            self.img_stack = ImageStack(self.image_stack_zip_file_path, os.path.join(WORKING_DIR, "epub_img"), use_kakadu=use_kakadu)
         else:
             self.img_stack = None
         # Try to find scandata
@@ -606,12 +618,13 @@ if __name__ == '__main__':
                         type=str, default=None)
     parser.add_argument('-m', '--metafile', help='Item _meta.xml file',
                         type=str, default=None)
-    parser.add_argument('-i', '--imagestack', help='Item _jp2.zip file',
+    parser.add_argument('-i', '--imagestack', help='Item imagestack file (usually _jp2.zip)',
                         type=str, default=None)
     parser.add_argument('-s', '--scandata', help='Item _scandata.xml file',
                         type=str, default=None)
     parser.add_argument('-w', '--workingdir', help='Directory used for temp files',
                         type=str, default=None)
+    parser.add_argument('--kakadu', help='Use kakadu is available', action='store_true')
     args = parser.parse_args()
 
     if not args.infile:
@@ -621,5 +634,4 @@ if __name__ == '__main__':
     if args.workingdir:
         WORKING_DIR = args.workingdir
 
-    EpubGenerator(args.infile, args.metafile, args.imagestack, args.scandata, args.outfile)
-
+    EpubGenerator(args.infile, args.metafile, args.imagestack, args.scandata, args.outfile, use_kakadu=args.kakadu)
