@@ -364,7 +364,11 @@ class EpubGenerator(object):
                 for subject in self.metadata['subject']:
                     self.book.add_metadata('DC', 'subject', subject)
         if 'date' in self.metadata.keys():
-            self.book.add_metadata('DC', 'date', self.metadata['date'])
+            if isinstance(self.metadata['date'], str):
+                self.book.add_metadata('DC', 'date', self.metadata['date'])
+            elif isinstance(self.metadata['date'], list):
+                for date in self.metadata['date']:
+                    self.book.add_metadata('DC', 'date', date)
 
     def set_accessibility_metadata(self):
         summary = ''
