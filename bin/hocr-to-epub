@@ -281,7 +281,11 @@ class EpubGenerator(object):
                 self.metadata['language'] = '; '.join(map(self.normalize_language, self.metadata['language']))
                 self.book.set_language(self.metadata['language'])
         if 'title' in self.metadata.keys():
-            self.book.set_title(self.metadata['title'])
+            if isinstance(self.metadata['title'], str):
+                self.book.set_title(self.metadata['title'])
+            elif isinstance(self.metadata['title'], list):
+                title = ' ; '.join(self.metadata['title'])
+                self.book.set_title(title)
         if 'creator' in self.metadata.keys():
             if type(self.metadata['creator']) is str:
                 self.book.add_author(self.metadata['creator'])
