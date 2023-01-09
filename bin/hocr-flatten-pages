@@ -36,11 +36,10 @@ def process_file(filepath):
         else:
             # XXX: This assumes that <div class="ocr_page"> is the only html
             # element on the line (!)
-            ss = re.sub(rem, '', s, count=1)
+            s = re.sub(rem, '', s, count=1)
 
         print(s)
 
-    print('</div>')
     print(bottom.decode('utf-8'))
 
 
