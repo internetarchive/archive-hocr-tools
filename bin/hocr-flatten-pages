@@ -10,6 +10,8 @@ from lxml import etree
 from hocr.parse import hocr_page_iterator
 from hocr.util import open_if_required, get_header_footer
 
+rem = re.compile("<div class=['\"]ocr_page['\"].*>")
+
 def process_file(filepath):
     fd = open_if_required(filepath)
     top, bottom = get_header_footer(fd)
@@ -34,7 +36,7 @@ def process_file(filepath):
         else:
             # XXX: This assumes that <div class="ocr_page"> is the only html
             # element on the line (!)
-            s = re.sub(s, '\<div\ class="ocr_page".*>', '', count=1)
+            ss = re.sub(rem, '', s, count=1)
 
         print(s)
 
