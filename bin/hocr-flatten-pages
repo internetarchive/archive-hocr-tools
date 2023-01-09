@@ -1,0 +1,54 @@
+#!/usr/bin/env python
+
+import sys
+import re
+
+import argparse
+
+from lxml import etree
+
+from hocr.parse import hocr_page_iterator
+from hocr.util import open_if_required, get_header_footer
+
+def process_file(filepath, outfmt):
+    fd = open_if_required(filepath)
+    top, bottom = get_header_footer(fd)
+
+    # Idea: strip ending for first page, add ending to last page?
+
+    first = True
+
+    print(top.decode('utf-8'))
+    for pageno, page in enumerate(hocr_page_iterator(fd)):
+
+        s = etree.tostring(page, pretty_print=True, method='xml',
+                           encoding='utf-8').decode('utf-8')
+
+        s = ' ' + s.replace(' xmlns="http://www.w3.org/1999/xhtml"', '')
+
+        if first:
+            # Remove the last </div> of the first page
+            idx = s.rindex('</div>')
+            s = s[:idx]
+            first = False
+        else:
+            # XXX: This assumes that <div class="ocr_page"> is the only html
+            # element on the line (!)
+            s = re.sub(s, '\<div\ class="ocr_page".*>', '', count=1)
+
+        print(s)
+
+    print('</div>')
+    print(bottom.decode('utf-8'))
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description='hOCR page flatten (combine several pages into one page)')
+    parser.add_argument('-f', '--infile', help='Filename to read',
+                        type=str, default=None)
+    parser.add_argument('-o', '--out-format', help='Outfile format - make sure it '
+                        'takes an int as format',
+                        type=str, default=None)
+    args = parser.parse_args()
+
+    process_file(args.infile, args.out_format)

@@ -23,6 +23,7 @@ setup(name='archive-hocr-tools',
                'bin/hocr-lookup-create', 'bin/hocr-lookup-reconstruct',
                'bin/hocr-text-paragraphs', 'bin/hocr-extract-page',
                'bin/abbyy-to-hocr', 'bin/hocr-split-pages',
+               'bin/hocr-flatten-pages',
                'bin/hocr-to-epub', 'bin/pdf-to-hocr'],
       classifiers=[
           'Development Status :: 3 - Alpha',
