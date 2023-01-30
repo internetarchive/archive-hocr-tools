@@ -23,6 +23,7 @@ from PIL import Image
 Image.MAX_IMAGE_PIXELS = 933120000
 
 import zipfile
+import tarfile
 import os
 import shutil
 import subprocess
@@ -43,19 +44,29 @@ class ImageStack(object):
     def __init__(self, image_archive_file_path, output_basename, use_kakadu=False):
         self.output_basename = output_basename
         self.image_archive_file_path = image_archive_file_path
+        self.is_zip = self.image_archive_file_path.endswith('.zip')
         self.tempdir_zip   = os.path.join(WORKING_DIR, 'kakadu_input')
         self.tempfile_jp2  = os.path.join(WORKING_DIR, 'temp.jp2')
         self.use_kakadu = use_kakadu
-        self.parse_zip()
+        self.parse_stack()
 
-    def parse_zip(self):
-        # Get all the images in the filename order (this should correspond to the page ordering)
-        self.zf = zipfile.ZipFile(self.image_archive_file_path)
-        for idx, img in enumerate(sorted(self.zf.namelist())):
-            info = self.zf.getinfo(img)
-            if info.is_dir():
-                continue
-            self.filenames.append(img)
+    def parse_stack(self):
+
+        if self.is_zip:
+            # Get all the images in the filename order (this should correspond to the page ordering)
+            self.zf = zipfile.ZipFile(self.image_archive_file_path)
+            for idx, img in enumerate(sorted(self.zf.namelist())):
+                info = self.zf.getinfo(img)
+                if info.is_dir():
+                    continue
+                self.filenames.append(img)
+        else:
+            self.zf = tarfile.open(self.image_archive_file_path)
+            for idx, img in enumerate(self.zf):
+                if not img.isfile():
+                    continue
+                self.filenames.append(img.name)
+            self.filenames = sorted(self.filenames)
 
     def crop_image(self, page, box):
         # Keep track of the number of images cropped out from each page
@@ -72,9 +83,19 @@ class ImageStack(object):
 
         # Extract the image from the zipfile
         tempfile_tiff = os.path.join(WORKING_DIR, 'page_%u.tiff' % page)
+
         if tempfile_tiff not in self.temp_files:
-            self.zf.extract(self.filenames[page], self.tempdir_zip)
             extracted_file_path = os.path.join(self.tempdir_zip, self.filenames[page])
+
+            if self.is_zip:
+                self.zf.extract(self.filenames[page], self.tempdir_zip)
+            else:
+                os.makedirs(os.path.dirname(extracted_file_path), exist_ok=True)
+                fp = self.zf.extractfile(self.filenames[page])
+                f = open(extracted_file_path, 'wb+')
+                f.write(fp.read())
+                fp.close()
+                f.close()
 
             # TODO: Just use Pillow here, before the rename even
             if self.use_kakadu:
