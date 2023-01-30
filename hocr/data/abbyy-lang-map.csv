@@ -5,7 +5,7 @@ Adyghe,ady,Adyghe
 Afrikaans,afr,Afrikaans
 Agul,agx,Aghul
 Albanian,sqi,Albanian
-Altaic,,
+Altaic,tut,Altaic languages
 ArabicAlgeria,arq,Algerian Arabic
 ArabicBahrain,afb,Gulf Arabic
 ArabicEgypt,arz,Egyptian Arabic
@@ -198,8 +198,8 @@ Mansi,mns,Mansi
 Maori,mri,Maori
 Marathi,mar,Marathi
 Mari,chm,Mari (Russia)
-Maya,,
-Miao,,
+Maya,myn,Mayan languages
+Miao,hmn,Hmong
 Minankabaw,min,Minangkabau
 Mohawk,moh,Mohawk
 Mongol,mgt,Mongol
@@ -226,7 +226,7 @@ OldSpanish,,
 Ossetic,oss,Ossetian
 Papiamento,pap,Papiamento
 Papiamento_Legacy,,
-PidginEnglish,,
+PidginEnglish,cpe,"Creoles and pidgins, English based"
 Pinyin,pny,Pinyin
 Polish,pol,Polish
 PortugueseBrazilian,por,Portuguese
