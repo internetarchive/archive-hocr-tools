@@ -11,3 +11,6 @@ It also contains various tools:
   resulting file for an entire book.
 * ``hocr-fold-chars``: A tool to transform a per-character hocr file into a
   per-word hocr file.
+* ``pdf-to-hocr``: A tool to take text content embedded in a PDF, and extract
+  it as HOCR format.
+* See more tools in the ./bin directory, not all have been documented yet.
