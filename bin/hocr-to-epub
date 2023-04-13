@@ -98,7 +98,7 @@ class ImageStack(object):
                 f.close()
 
             # TODO: Just use Pillow here, before the rename even
-            if self.use_kakadu:
+            if self.use_kakadu and self.filenames[page].endswith('.jp2'):
                 os.rename(extracted_file_path, self.tempfile_jp2)
 
                 cmd = [
