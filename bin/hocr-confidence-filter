@@ -7,7 +7,8 @@ from glob import glob
 
 from lxml import etree
 
-from hocr.parse import hocr_page_iterator, X_WCONF_REGEX
+from hocr.parse import hocr_page_iterator, hocr_page_get_scan_res, \
+        X_WCONF_REGEX, X_FSIZE_REGEX
 from hocr.util import get_header_footer
 
 
@@ -19,13 +20,25 @@ SINGLE_CHAR_CONF_THRESHOLD = 90
 AVERAGE_CHAR_CONF_THRESHOLD = 95
 CHAR_CONFIDENCE_MULTIPLIER_THRESHOLD = 60
 LOW_CONF_CHARS_FOR_WORD_PERCENTAGE_THRESHOLD = 0.2
+BIG_WORD_FONT_SIZE = None
 
 X_CONF_REGEX = re.compile(r'x_conf\s+([\d\.\-,]+){1}')
+
+
+def _get_fsize(wordelem):
+    f_sizeraw = X_FSIZE_REGEX.search(wordelem.attrib['title'])
+    if f_sizeraw:
+        x_fsize = float(f_sizeraw.group(1))
+        return x_fsize
+
+    return None
+
 
 def process_files(files_to_process, avg_line_thres, single_word_thres,
                   single_char_confidence,
                   average_char_conf_thres, char_conf_multiplier_thres,
-                  low_char_conf_perc_thres):
+                  low_char_conf_perc_thres,
+                  filter_big_text_fontsize):
     top, bottom = get_header_footer(files_to_process[0])
 
     sys.stdout.buffer.write(top)
@@ -35,6 +48,17 @@ def process_files(files_to_process, avg_line_thres, single_word_thres,
     for f in files_to_process:
         for page in hocr_page_iterator(f):
             page.tag = 'div'
+
+            hocr_page_dpi = hocr_page_get_scan_res(page)[1]
+            if hocr_page_dpi is not None:
+                page_scaler = 1.
+            else:
+                # Disable the font checks completely if we don't have a known
+                # dpi, as this metric is very unreliable in this case
+                # If we can get the dpi another way, set it to 72 / dpi, since
+                # we want to *decrease* the font size if Tesseract assumed 72
+                # when in reality the dpi was higher
+                page_scaler = None
 
             blocks = page.xpath("*[@class='ocr_carea']")
             for block in blocks:
@@ -50,20 +74,32 @@ def process_files(files_to_process, avg_line_thres, single_word_thres,
                         words = line.xpath("*[@class='ocrx_word']")
                         confs = []
 
+                        one_word_big = False
+
                         # Get confidence per word
                         for word in words:
                             conf = float(X_WCONF_REGEX.search(word.attrib['title']).group(1).split()[0])
                             confs.append(conf)
 
-                        if sum(confs) / len(confs) < avg_line_thres:
+                            if filter_big_text_fontsize and page_scaler:
+                                word_fsize = _get_fsize(word) * page_scaler
+                                one_word_big = word_fsize > filter_big_text_fontsize
+
+                        if one_word_big or (sum(confs) / len(confs) < avg_line_thres):
                             for word in words:
                                 wconf = float(X_WCONF_REGEX.search(word.attrib['title']).group(1).split()[0])
-                                if wconf < single_word_thres:
+                                if one_word_big or (wconf < single_word_thres):
                                     chars = []
 
                                     lower_than_thres_count = 0
                                     c = 100.
                                     text = ''
+                                    word_unrealistically_big = False
+
+                                    if filter_big_text_fontsize and page_scaler:
+                                        word_fsize = _get_fsize(word) * page_scaler
+                                        if word_fsize > filter_big_text_fontsize:
+                                            word_unrealistically_big = True
 
                                     # Confidence per chars
                                     for char in word.xpath('.//*[@class="ocrx_cinfo"]'):
@@ -77,9 +113,11 @@ def process_files(files_to_process, avg_line_thres, single_word_thres,
                                     perc = lower_than_thres_count / len(chars)
                                     avg_conf = sum(chars) / len(chars)
 
-                                    if perc > low_char_conf_perc_thres \
-                                    or avg_conf < average_char_conf_thres \
-                                    or c < char_conf_multiplier_thres:
+                                    if (perc > low_char_conf_perc_thres) \
+                                    or (avg_conf < average_char_conf_thres) \
+                                    or (c < char_conf_multiplier_thres) \
+                                    or (word_unrealistically_big and wconf < 85) \
+                                    or (word_unrealistically_big and len(chars) < 3):
                                         word.getparent().remove(word)
 
                                         words_removed += 1
@@ -166,7 +204,15 @@ if __name__ == '__main__':
                         'warrant removal of a word. 0 implies that this is '
                         'to be ignored. Default is %d' % AVERAGE_CHAR_CONF_THRESHOLD,
                         type=int, default=AVERAGE_CHAR_CONF_THRESHOLD)
-    
+    parser.add_argument('--filter-big-text-fontsize',
+                        help='Filter of really big characters/words'
+                        'This should be used only on the second pass meant to '
+                        'find stray text, as this step can filter out noise found '
+                        'in some of those steps. Default is no filtering, '
+                        '30 could be sensible value. If the hOCR page has no '
+                        'scan_res/dpi, this check is not active',
+                        type=int, default=BIG_WORD_FONT_SIZE)
+
     args = parser.parse_args()
 
     files_to_process = glob(args.glob)
@@ -181,5 +227,6 @@ if __name__ == '__main__':
                   args.single_word_confidence, args.single_char_confidence,
                   args.average_character_confidence_threshold,
                   args.char_conf_multiplier_threshold,
-                  args.low_conf_chars_percentage)
+                  args.low_conf_chars_percentage,
+                  args.filter_big_text_fontsize)
 
