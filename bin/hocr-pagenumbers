@@ -1,0 +1,383 @@
+#!/usr/bin/env python
+
+import sys
+import argparse
+
+import re
+PAGENO_RE = re.compile(r'([A-Z]{1})?[0-9 ]+[-/]?([0-9 ]+)$')
+
+
+# TODO:
+# - Modify heatmap code so that the hits per page as scaled to the amount of
+#   hits that page (1/n), which might make the heatmap less sensitive to noise
+#
+# - Implement other numeral schemes, refactor code to deal with these in a nicer
+#   way
+#
+# - Look at logistical regression, we can mark specific elements in hOCR files
+# (in their id or title) for ground truth data, like:
+# <span class="ocrx_word" id="PAGENUMBER_OK">13</span>
+# and:
+# <span class="ocrx_word" id="PAGENUMBER_NOISE">44223131</span>
+#
+# - Test with items in pagenumber-test-data - also the oddball ones (maybe add
+#   schemes for them)
+#
+# - Test against items sent by Jude (from ILL)
+#
+
+# - Use word confidence to indicate less likely matches (maybe make some score
+#   per match)?
+#
+# - Accurate confidence metric (based on algorithms in implementation)
+#
+# - Mention: "Versatile Page Numbering Analysis", Hervé Déjean, Jean-Luc Meunier
+#
+# TO HANDLE:
+# * The page numbers are of the form 22/314, 23/315, 71..363 and so forth, the
+#   OCR picks them up, but I am not sure if the module knows what to do with it.
+# * (12)10, (12)11, (12)12
+
+
+from hocr.parse import hocr_page_iterator, hocr_page_to_word_data
+
+
+import numpy as np
+
+SCALE = 50
+
+def heatmap(page_matches):
+    scaled_coords = []
+
+    for matches in page_matches:
+        for match in matches:
+            bbox = match[1]
+            bbox = list(map(int, bbox))
+            bbox_c = [(bbox[0]+bbox[2]) // 2, (bbox[1]+bbox[3]) // 2]
+
+            scaled_x = bbox_c[0] // SCALE
+            scaled_y = bbox_c[1] // SCALE
+            scaled_coords.append((scaled_x, scaled_y))
+
+
+    scaled_coords = np.array(scaled_coords)
+    max_x = np.amax(scaled_coords[:, 0])
+    max_y = np.amax(scaled_coords[:, 1])
+
+    #a = np.ndarray((max_y + 1, max_x + 1), dtype=np.float32)
+    a = np.ndarray((max_y + 1, max_x + 1), dtype=np.int32)
+    a[:, :] = 0
+
+    for scaled_coord in scaled_coords:
+        x, y = scaled_coord
+        #print(x, y)
+        a[(y, x)] += 1
+
+    #a /= len(scaled_coords)
+
+
+    return a
+
+
+def word_data_in_bbox(page_matches, scaled_bin):
+    res = []
+
+    for matches in page_matches:
+        for match in matches:
+            # XXX: DRY
+            bbox = match[1]
+            bbox = list(map(int, bbox))
+            bbox_c = [(bbox[0]+bbox[2]) // 2, (bbox[1]+bbox[3]) // 2]
+            scaled_x = bbox_c[0] // SCALE
+            scaled_y = bbox_c[1] // SCALE
+
+            if scaled_x == scaled_bin[1] and scaled_y == scaled_bin[0]:
+                res.append(match)
+
+    return res
+
+
+def debug(page_matches):
+    import matplotlib.pyplot as plt
+    a = heatmap(page_matches)
+    plt.imshow(a, cmap='hot', interpolation='nearest')
+    plt.show()
+
+    AMT = 1
+    vals = sorted(a.flatten(), reverse=True)
+    print(vals[:AMT])
+
+    wd = []
+    for n in range(AMT):
+        idx = np.where(a == vals[n])
+        # HACK: we want to check all bins matches, not just the first
+        if len(idx[0]) > 1:
+            idx = (idx[0][0], idx[0][1])
+        wd += word_data_in_bbox(page_matches, idx)
+
+    print(len(wd))
+    print(wd)
+
+    #foo = []
+    #for p in page_matches:
+    #    foo.extend(p)
+    #wd = foo # hack to show all
+
+    nums = []
+    for v in wd:
+        try:
+            w = int(re.sub('[^0-9]', '', v[0]))
+            if w > 1000:
+                # XXX: hack
+                continue
+            nums.append((w, v[2]))
+        except:
+            pass
+
+    pages = [x[1] for x in nums]
+    pagenumbers = [x[0] for x in nums]
+
+    plt.plot(pages, pagenumbers, 'x')
+    plt.show()
+    print(nums)
+
+
+
+    ## Step ?: Assign semantic numeral values to each (e.g. 22/314 - what does it mean?)
+    #for matches in page_matches:
+    #    print(matches)
+
+
+    #pages = list(range(len(page_matches)))
+    #candidates = [x[0] if len(x) else None for x in page_matches]
+
+    #plot(pages, candidates)
+    #show()
+
+    # Step 2: Analyse...
+
+def fits_sequence(sequence, pageidx, num):
+    last_seq = sequence[-1]
+
+    if (pageidx - last_seq[0] == num - last_seq[1] and
+            num != last_seq[1] and
+            pageidx != last_seq[0]):
+        return True
+
+    return False
+
+
+def greedy_sequence_enumeration(page_matches):
+    current_sequences = []
+    parked_sequences = []
+
+    # TODO: see if we want to tweak this some, especially if we add logistic regression
+    #density_threshold = 0.2
+    density_threshold = 0.3
+
+    for pageidx, matches in enumerate(page_matches):
+        for num in matches:
+            fits = False
+
+            for seq in current_sequences:
+                if fits_sequence(seq, pageidx, num):
+                    seq.append((pageidx, num))
+                    fits = True
+                    break
+
+            # Create new sequence
+            if not fits:
+                current_sequences.append([(pageidx, num)])
+
+        # Figure out which sequences to park (so that we don't have to take them
+        # into account in the analysis going forward)
+        park_idx = []
+        for idx, sequence in enumerate(current_sequences):
+            seq_len = len(sequence)
+
+            seq_start = sequence[0][0]
+            seq_tail = pageidx
+
+            seq_diff = seq_tail - seq_start
+            density = seq_len / (seq_tail - seq_start) if seq_diff != 0 else 1
+
+            if density < density_threshold:
+                move_seq = current_sequences.pop(idx)
+                parked_sequences.append(move_seq)
+
+    # Park remaining sequences
+    for sequence in current_sequences:
+        parked_sequences.append(sequence)
+    current_sequences = []
+
+    # Filter 1-length out
+    parked_sequences = list(filter(lambda x: len(x) > 1, parked_sequences))
+
+    return parked_sequences
+
+
+class State(object):
+    def __init__(self, pageidx, value):
+        self.pageidx = pageidx
+        self.value = value
+        self.links = {}
+
+    def link(self, other_state, cost):
+        self.links[other_state] = cost
+
+    def get_cost(self, other_state):
+        try:
+            return self.links[other_state]
+        except:
+            # TODO: Investigate this, we really want the cost to be defined for
+            # everything
+            #print('Failed for page idx %d with value %s and page idx %d with value %s' % (self.pageidx, self.value, other_state.pageidx, other_state.value))
+            return 2.
+
+    def __repr__(self):
+        return '(%s, %s)' % (self.pageidx, self.value)
+
+        #s = '%s -> [' % self.value
+        #vals = list(map(lambda x: str(x.value) if x.value else 'None', self.links))
+        #s += ','.join(vals)
+        #s += ']'
+        #return s
+
+
+def create_graph(sequences, page_count, F=5):
+    # XXX: This requires the gaps in sequences to be filled up
+
+    graph = []
+
+    NONE_COST = 1. # Max cost
+
+    page_states = {}
+    for page in range(page_count):
+        page_states[page] = [State(page, None)]
+
+    for sequence in sequences:
+        N = len(sequence)
+        sequence_states = []
+
+        for idx, (pageidx, value) in enumerate(sequence):
+            s = State(pageidx, value)
+            if (idx > 0):
+                cost = 1 - (F / N)
+                # XXX: The algorithm we work with currently uses cost, not score, so we add 1 - ... here
+                sequence_states[idx-1].link(s, 1 - cost)
+
+                #sequence_states[idx-1].link(s, cost)
+
+            sequence_states.append(s)
+            page_states[pageidx].append(s)
+
+    # Now connect all the states of the previous layer to the None state of the
+    # next layer and connect all the None states to the other sequences
+    for page in range(1, page_count):
+        prev_page_states = page_states[page - 1]
+        current_none_state = page_states[page][0]
+
+        # XXX: It should also be possible for sequences to jump from the end of
+        # one sequence to another, the code does not allow for this yet
+        # unfortunately
+
+        for prev_page_state in prev_page_states:
+            # TODO: We might want some of these to be negative if a state is
+            # leaving its sequence early
+            prev_page_state.link(current_none_state, NONE_COST)
+
+        prev_page_none_state = prev_page_states[0]
+        for page_state in page_states[page]:
+            prev_page_none_state.link(page_state, NONE_COST)
+
+
+
+    list_page_states = []
+    for page in range(page_count):
+        list_page_states.append(page_states[page])
+
+    return list_page_states
+
+
+def fill_holes(sequences):
+    return [list(zip(range(seq[0][0], seq[-1][0]+1), range(seq[0][1], seq[-1][1]+1)))
+            for seq in sequences]
+
+
+def process_file(hocrfile):
+    page_matches = []
+
+    # Step 1: find candidates for each page (with coords)
+    page_stop = 10000
+    for pageidx, page in enumerate(hocr_page_iterator(hocrfile)):
+        word_data = hocr_page_to_word_data(page)
+        matches = []
+
+        for par in word_data:
+            for line in par['lines']:
+                for word in line['words']:
+                    if PAGENO_RE.match(word['text']):
+                        num = word['text']
+
+                        #matches.append((word['text'], word['bbox'], pageidx))
+                        try:
+                            matches.append(int(word['text']))
+                        except ValueError:
+                            pass # XXX
+
+        page_matches.append(matches)
+
+        if pageidx > page_stop:
+            break
+
+
+    from pprint import pprint
+    pprint(page_matches)
+
+    sequences = greedy_sequence_enumeration(page_matches)
+    #pprint(sequences)
+
+    sequences = fill_holes(sequences)
+    pprint(sequences)
+
+    trellis = create_graph(sequences, len(page_matches))
+    pprint(trellis)
+
+    from viterbi_trellis import ViterbiTrellis
+    v = ViterbiTrellis(trellis, lambda x: 1., lambda x, y: x.get_cost(y))
+    best_path = v.viterbi_best_path()
+    print(best_path)
+
+    pagenos = []
+
+    last_state = None
+    for page_idx, (choice_idx, vals) in enumerate(zip(best_path, trellis)):
+        print('\tpicked: %s -> %s' % (last_state, vals[choice_idx]))
+        print()
+
+        if last_state is not None:
+            print('New choices:',)
+            for link in last_state.links:
+                print(last_state, '->', link, ' with cost', last_state.get_cost(link))
+
+
+        last_state = vals[choice_idx]
+
+        # +1 for 1-based page numbering just so that we can understand it in our
+        # debug prints
+        pagenos.append((page_idx + 1, last_state.value))
+
+    pprint(pagenos)
+
+    #debug(page_matches)
+
+
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description='hOCR to plaintext')
+    parser.add_argument('-f', '--infile', help='Filename to read',
+                        type=str, default=None)
+    args = parser.parse_args()
+
+    process_file(args.infile)
