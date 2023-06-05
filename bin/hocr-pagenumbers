@@ -24,6 +24,10 @@ PAGENO_RE = re.compile(r'([A-Z]{1})?[0-9 ]+[-/]?([0-9 ]+)$')
 #   schemes for them)
 #
 # - Test against items sent by Jude (from ILL)
+#   in pagenumber-test-data/ill_logs.csv
+#
+# - Maybe at the end, extrapolate outside of our regular bounds in case any
+#   values are still 'None' (but with much lower confidence)
 #
 
 # - Use word confidence to indicate less likely matches (maybe make some score
@@ -155,6 +159,9 @@ def debug(page_matches):
     #show()
 
     # Step 2: Analyse...
+
+
+
 
 def fits_sequence(sequence, pageidx, num):
     last_seq = sequence[-1]
@@ -303,8 +310,17 @@ def fill_holes(sequences):
     return [list(zip(range(seq[0][0], seq[-1][0]+1), range(seq[0][1], seq[-1][1]+1)))
             for seq in sequences]
 
+def create_page_json(pagenos):
+    data = {'pages': [], 'confidence': 'todo', 'identifier': 'todo'}
 
-def process_file(hocrfile):
+    for (pageidx, pagenoval) in pagenos:
+        data['pages'].append({'leafNum': pageidx,
+                              'pageNumber': pagenoval if pagenoval else ''})
+
+    return data
+
+
+def process_file(hocrfile, outfile):
     page_matches = []
 
     # Step 1: find candidates for each page (with coords)
@@ -365,9 +381,14 @@ def process_file(hocrfile):
 
         # +1 for 1-based page numbering just so that we can understand it in our
         # debug prints
-        pagenos.append((page_idx + 1, last_state.value))
+        pagenos.append((page_idx, last_state.value))
 
-    pprint(pagenos)
+    page_json = create_page_json(pagenos)
+    outfile_fp = open(outfile, 'w')
+    import json
+    json.dump(page_json, outfile_fp, indent=' ' * 4)
+    outfile_fp.close()
+
 
     #debug(page_matches)
 
@@ -378,6 +399,8 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='hOCR to plaintext')
     parser.add_argument('-f', '--infile', help='Filename to read',
                         type=str, default=None)
+    parser.add_argument('-o', '--outfile', help='Filename to write to',
+                        type=str, default=None)
     args = parser.parse_args()
 
-    process_file(args.infile)
+    process_file(args.infile, args.outfile)
