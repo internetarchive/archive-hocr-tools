@@ -32,6 +32,12 @@ from hocr.parse import hocr_page_iterator, hocr_page_to_word_data
 # * (7), (8), (9), etc
 
 
+COMPOSITE_ANY_RE = re.compile(r'.*\d.*')
+COMPOSITE_DIGIT_SUB = re.compile(r'\d+')
+COMPOSITE_DIGIT_RE = re.compile('\d+')
+COMPOSITE_SIMPLE_RES = [re.compile('^[A-Z]+-?\d+$'), re.compile('^\d+-?[A-Z]+$'),
+                        re.compile('^\(\d+\)\(\d+\)$'), re.compile('^\(\d+\)\d+$'),]
+
 
 def extrapolate(scheme, start, end):
     start_pageidx, start_pagenumber = start
@@ -118,6 +124,79 @@ class SingleLetterNumberingScheme(object):
         return extrapolate(self, start, end)
 
 
+class CompositeNumberingScheme(object):
+    MUL = 10000
+
+    def __init__(self, val):
+        self.orig_val = val
+        #self.count = len(COMPOSITE_DIGIT_RE.findall(val))
+        self.format = COMPOSITE_DIGIT_SUB.sub(r'%d', val.replace('%', '%%'))
+        self.composite_scheme = '^' + COMPOSITE_DIGIT_SUB.sub(r'\\d+', re.escape(val)) + '$'
+        self.comp_re = re.compile(self.composite_scheme)
+
+        # TODO: Only do this if we deem it a 'simple' composition, like A12..A13
+        # or something like that
+        self.SUPPORT_EXTRAPOLATION = False
+
+        for r in COMPOSITE_SIMPLE_RES:
+            if r.match(val):
+                self.SUPPORT_EXTRAPOLATION = True
+                break
+
+    def syntactic_match(self, s):
+        return self.comp_re.match(s)
+
+    def is_increase(self, base, steps, check):
+        return base.num_value + steps == check.num_value
+
+    def numeral_value(self, s):
+        m = COMPOSITE_DIGIT_RE.findall(s)
+        n = 0
+        for idx, v in enumerate(reversed(m)):
+            if idx == 0:
+                n += int(v)
+            else:
+                n += int(v) * self.MUL**idx
+
+        return n
+
+    def from_num(self, n):
+        idx = 0
+        digits = []
+        r = n % self.MUL
+        if r == 0:
+            digits.append(r)
+
+        while r != 0:
+            digits.append(r)
+            idx += 1
+            r = (n // self.MUL**idx) % self.MUL
+
+        #if len(digits) != self.count:
+        #    digits += [0]
+        digits = tuple(reversed(digits))
+
+        #print('orig:', self.orig_val)
+        #print('comp:', self.composite_scheme)
+        #print('format and digits:', self.format, digits)
+        v = self.format % digits
+        return v
+
+    def extrapolate_sequence(self, start, end):
+        return extrapolate(self, start, end)
+
+
+def composite_factory(val):
+    if COMPOSITE_ANY_RE.match(val):
+        #print('New factory:', repr(val))
+        #return CompositeNumberingScheme(val)
+        for r in COMPOSITE_SIMPLE_RES:
+            if r.match(val):
+                #print('New factory:', repr(val))
+                return CompositeNumberingScheme(val)
+    return None
+
+
 NUMBER_SCHEMES = [
     ArabicNumberingScheme(),
     RomanNumberingScheme(),
@@ -136,6 +215,8 @@ class PageNumberCandidate(object):
 def find_hocr_matches(hocrfile):
     page_matches = []
 
+    composite_schemes = []
+
     page_stop = 10000
     for pageidx, page in enumerate(hocr_page_iterator(hocrfile)):
         word_data = hocr_page_to_word_data(page)
@@ -144,10 +225,32 @@ def find_hocr_matches(hocrfile):
         for par in word_data:
             for line in par['lines']:
                 for word in line['words']:
-                    for scheme in NUMBER_SCHEMES:
-                        if scheme.syntactic_match(word['text']):
-                            match = PageNumberCandidate(word['text'], scheme)
+                    text = word['text']
+                    found = False
+                    for scheme in NUMBER_SCHEMES + composite_schemes:
+                        if scheme.syntactic_match(text):
+                            match = PageNumberCandidate(text, scheme)
                             matches.append(match)
+                            found = True
+
+                        if found:
+                            break
+
+                    if found:
+                        break
+
+                    if text == '7':
+                        s = ArabicNumberingScheme()
+                        print(s.syntactic_match(text))
+                        raise Exception(text)
+
+                    # If we haven't matched anything, consider a new composite
+                    # scheme
+                    fact = composite_factory(text)
+                    if fact:
+                        composite_schemes.append(fact)
+                        match = PageNumberCandidate(text, fact)
+                        matches.append(match)
 
         page_matches.append(matches)
 
