@@ -32,9 +32,18 @@ from hocr.parse import hocr_page_iterator, hocr_page_to_word_data
 # * (7), (8), (9), etc
 
 
-# syntatic form
-# expected monotonic increase (in steps?) - equality test given N steps
-# tolerance for holes & allow extrapolation
+
+def extrapolate(scheme, start, end):
+    start_pageidx, start_pagenumber = start
+    end_pageidx, end_pagenumber = end
+
+    new_sequence = []
+
+    for pageidx, val in zip(range(start_pageidx, end_pageidx+1),
+                            range(int(start_pagenumber.num_value), int(end_pagenumber.num_value+1))):
+        new_sequence.append((pageidx, PageNumberCandidate(scheme.from_num(val), scheme)))
+
+    return new_sequence
 
 
 class ArabicNumberingScheme(object):
@@ -58,17 +67,12 @@ class ArabicNumberingScheme(object):
     def numeral_value(self, s):
         return int(s)
 
+    def from_num(self, n):
+        return n
+        #return str(n)
+
     def extrapolate_sequence(self, start, end):
-        start_pageidx, start_pagenumber = start
-        end_pageidx, end_pagenumber = end
-
-        new_sequence = []
-
-        for pageidx, val in zip(range(start_pageidx, end_pageidx+1),
-                                range(int(start_pagenumber.num_value), int(end_pagenumber.num_value+1))):
-            new_sequence.append((pageidx, PageNumberCandidate(val, self)))
-
-        return new_sequence
+        return extrapolate(self, start, end)
 
 
 class RomanNumberingScheme(object):
@@ -87,24 +91,37 @@ class RomanNumberingScheme(object):
     def numeral_value(self, s):
         return fromRoman(s.upper())
 
+    def from_num(self, n):
+        return toRoman(n)
+
     def extrapolate_sequence(self, start, end):
-        start_pageidx, start_pagenumber = start
-        end_pageidx, end_pagenumber = end
-
-        new_sequence = []
-
-        for pageidx, val in zip(range(start_pageidx, end_pageidx+1),
-                                range(int(start_pagenumber.num_value), int(end_pagenumber.num_value+1))):
-            new_sequence.append((pageidx, PageNumberCandidate(toRoman(val), self)))
-
-        return new_sequence
+        return extrapolate(self, start, end)
 
 
+class SingleLetterNumberingScheme(object):
+    SUPPORT_EXTRAPOLATION = True
+
+    def syntactic_match(self, s):
+        len(s) == 1 and ((s >= 'a' and s <= 'z') or
+                         (s >= 'A' and s <= 'Z'))
+
+    def is_increase(self, base, steps, check):
+        return base.num_value + steps == check.num_value
+
+    def numeral_value(self, s):
+        return ord(s)
+
+    def from_num(self, n):
+        return chr(n)
+
+    def extrapolate_sequence(self, start, end):
+        return extrapolate(self, start, end)
 
 
 NUMBER_SCHEMES = [
     ArabicNumberingScheme(),
     RomanNumberingScheme(),
+    SingleLetterNumberingScheme(),
 ]
 
 
