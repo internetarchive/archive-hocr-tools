@@ -80,7 +80,7 @@ class RomanNumberingScheme(object):
 
     def syntactic_match(self, s):
         try:
-            v = fromRoman(s.upper())
+            v = fromRoman(s)
             return True
         except InvalidRomanNumeralError:
             return False
@@ -89,7 +89,7 @@ class RomanNumberingScheme(object):
         return base.num_value + steps == check.num_value
 
     def numeral_value(self, s):
-        return fromRoman(s.upper())
+        return fromRoman(s)
 
     def from_num(self, n):
         return toRoman(n)
