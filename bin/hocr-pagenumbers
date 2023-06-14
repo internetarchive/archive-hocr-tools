@@ -4,163 +4,71 @@ import sys
 import argparse
 
 import re
-PAGENO_RE = re.compile(r'([A-Z]{1})?[0-9 ]+[-/]?([0-9 ]+)$')
-
+from hocr.parse import hocr_page_iterator, hocr_page_to_word_data
 
 # TODO:
-# - Modify heatmap code so that the hits per page as scaled to the amount of
-#   hits that page (1/n), which might make the heatmap less sensitive to noise
 #
-# - Implement other numeral schemes, refactor code to deal with these in a nicer
-#   way
-#
-# - Look at logistical regression, we can mark specific elements in hOCR files
-# (in their id or title) for ground truth data, like:
-# <span class="ocrx_word" id="PAGENUMBER_OK">13</span>
-# and:
-# <span class="ocrx_word" id="PAGENUMBER_NOISE">44223131</span>
-#
+# - Clean up code
+# - Add other numbering schemes
+# - Test with logistic regression
+# - Add confidence based on logistic regression and other data (maybe also word
+#   confidence?)
 # - Test with items in pagenumber-test-data - also the oddball ones (maybe add
 #   schemes for them)
-#
-# - Test against items sent by Jude (from ILL)
-#   in pagenumber-test-data/ill_logs.csv
+# - Compare with ILL
 #
 # - Maybe at the end, extrapolate outside of our regular bounds in case any
 #   values are still 'None' (but with much lower confidence)
-#
+# - Add further extrapolation option (also logistic regression?)
 
-# - Use word confidence to indicate less likely matches (maybe make some score
-#   per match)?
-#
-# - Accurate confidence metric (based on algorithms in implementation)
-#
 # - Mention: "Versatile Page Numbering Analysis", Hervé Déjean, Jean-Luc Meunier
 #
 # TO HANDLE:
 # * The page numbers are of the form 22/314, 23/315, 71..363 and so forth, the
 #   OCR picks them up, but I am not sure if the module knows what to do with it.
 # * (12)10, (12)11, (12)12
+# * (7), (8), (9), etc
 
 
-from hocr.parse import hocr_page_iterator, hocr_page_to_word_data
+# syntatic form
+# expected monotonic increase (in steps?) - equality test given N steps
+# tolerance for holes & allow extrapolation
 
 
-import numpy as np
+NUMBER_SCHEMES = [
+]
 
-SCALE = 50
-
-def heatmap(page_matches):
-    scaled_coords = []
-
-    for matches in page_matches:
-        for match in matches:
-            bbox = match[1]
-            bbox = list(map(int, bbox))
-            bbox_c = [(bbox[0]+bbox[2]) // 2, (bbox[1]+bbox[3]) // 2]
-
-            scaled_x = bbox_c[0] // SCALE
-            scaled_y = bbox_c[1] // SCALE
-            scaled_coords.append((scaled_x, scaled_y))
+PAGENO_RE = re.compile(r'([A-Z]{1})?[0-9 ]+[-/]?([0-9 ]+)$')
 
 
-    scaled_coords = np.array(scaled_coords)
-    max_x = np.amax(scaled_coords[:, 0])
-    max_y = np.amax(scaled_coords[:, 1])
+def find_hocr_matches(hocrfile):
+    page_matches = []
 
-    #a = np.ndarray((max_y + 1, max_x + 1), dtype=np.float32)
-    a = np.ndarray((max_y + 1, max_x + 1), dtype=np.int32)
-    a[:, :] = 0
+    page_stop = 10000
+    for pageidx, page in enumerate(hocr_page_iterator(hocrfile)):
+        word_data = hocr_page_to_word_data(page)
+        matches = []
 
-    for scaled_coord in scaled_coords:
-        x, y = scaled_coord
-        #print(x, y)
-        a[(y, x)] += 1
+        for par in word_data:
+            for line in par['lines']:
+                for word in line['words']:
+                    if PAGENO_RE.match(word['text']):
+                        num = word['text']
 
-    #a /= len(scaled_coords)
+                        #matches.append((word['text'], word['bbox'], pageidx))
+                        try:
+                            matches.append(int(word['text']))
+                        except ValueError:
+                            print('error:', word['text'])
+                            #raise
+                            pass # XXX
 
+        page_matches.append(matches)
 
-    return a
+        if pageidx > page_stop:
+            break
 
-
-def word_data_in_bbox(page_matches, scaled_bin):
-    res = []
-
-    for matches in page_matches:
-        for match in matches:
-            # XXX: DRY
-            bbox = match[1]
-            bbox = list(map(int, bbox))
-            bbox_c = [(bbox[0]+bbox[2]) // 2, (bbox[1]+bbox[3]) // 2]
-            scaled_x = bbox_c[0] // SCALE
-            scaled_y = bbox_c[1] // SCALE
-
-            if scaled_x == scaled_bin[1] and scaled_y == scaled_bin[0]:
-                res.append(match)
-
-    return res
-
-
-def debug(page_matches):
-    import matplotlib.pyplot as plt
-    a = heatmap(page_matches)
-    plt.imshow(a, cmap='hot', interpolation='nearest')
-    plt.show()
-
-    AMT = 1
-    vals = sorted(a.flatten(), reverse=True)
-    print(vals[:AMT])
-
-    wd = []
-    for n in range(AMT):
-        idx = np.where(a == vals[n])
-        # HACK: we want to check all bins matches, not just the first
-        if len(idx[0]) > 1:
-            idx = (idx[0][0], idx[0][1])
-        wd += word_data_in_bbox(page_matches, idx)
-
-    print(len(wd))
-    print(wd)
-
-    #foo = []
-    #for p in page_matches:
-    #    foo.extend(p)
-    #wd = foo # hack to show all
-
-    nums = []
-    for v in wd:
-        try:
-            w = int(re.sub('[^0-9]', '', v[0]))
-            if w > 1000:
-                # XXX: hack
-                continue
-            nums.append((w, v[2]))
-        except:
-            pass
-
-    pages = [x[1] for x in nums]
-    pagenumbers = [x[0] for x in nums]
-
-    plt.plot(pages, pagenumbers, 'x')
-    plt.show()
-    print(nums)
-
-
-
-    ## Step ?: Assign semantic numeral values to each (e.g. 22/314 - what does it mean?)
-    #for matches in page_matches:
-    #    print(matches)
-
-
-    #pages = list(range(len(page_matches)))
-    #candidates = [x[0] if len(x) else None for x in page_matches]
-
-    #plot(pages, candidates)
-    #show()
-
-    # Step 2: Analyse...
-
-
+    return page_matches
 
 
 def fits_sequence(sequence, pageidx, num):
@@ -251,6 +159,8 @@ class State(object):
         #return s
 
 
+# TODO: This is sequence selection
+# TODO: Should F=5, or some other value ??
 def create_graph(sequences, page_count, F=5):
     # XXX: This requires the gaps in sequences to be filled up
 
@@ -320,61 +230,19 @@ def create_page_json(pagenos):
     return data
 
 
-def process_file(hocrfile, outfile):
-    page_matches = []
-
-    # Step 1: find candidates for each page (with coords)
-    page_stop = 10000
-    for pageidx, page in enumerate(hocr_page_iterator(hocrfile)):
-        word_data = hocr_page_to_word_data(page)
-        matches = []
-
-        for par in word_data:
-            for line in par['lines']:
-                for word in line['words']:
-                    if PAGENO_RE.match(word['text']):
-                        num = word['text']
-
-                        #matches.append((word['text'], word['bbox'], pageidx))
-                        try:
-                            matches.append(int(word['text']))
-                        except ValueError:
-                            pass # XXX
-
-        page_matches.append(matches)
-
-        if pageidx > page_stop:
-            break
-
-
-    from pprint import pprint
-    pprint(page_matches)
-
-    sequences = greedy_sequence_enumeration(page_matches)
-    #pprint(sequences)
-
-    sequences = fill_holes(sequences)
-    pprint(sequences)
-
-    trellis = create_graph(sequences, len(page_matches))
-    pprint(trellis)
-
-    from viterbi_trellis import ViterbiTrellis
-    v = ViterbiTrellis(trellis, lambda x: 1., lambda x, y: x.get_cost(y))
-    best_path = v.viterbi_best_path()
-    print(best_path)
-
+def pagenos_from_trellis(best_path, trellis):
     pagenos = []
 
     last_state = None
     for page_idx, (choice_idx, vals) in enumerate(zip(best_path, trellis)):
-        print('\tpicked: %s -> %s' % (last_state, vals[choice_idx]))
-        print()
+        #print('\tpicked: %s -> %s' % (last_state, vals[choice_idx]))
+        #print()
 
         if last_state is not None:
-            print('New choices:',)
+            #print('New choices:',)
             for link in last_state.links:
-                print(last_state, '->', link, ' with cost', last_state.get_cost(link))
+                pass
+                #print(last_state, '->', link, ' with cost', last_state.get_cost(link))
 
 
         last_state = vals[choice_idx]
@@ -382,6 +250,37 @@ def process_file(hocrfile, outfile):
         # +1 for 1-based page numbering just so that we can understand it in our
         # debug prints
         pagenos.append((page_idx, last_state.value))
+
+    return pagenos
+
+
+def process_file(hocrfile, outfile):
+    # Step 1: find candidates for each page (with coords)
+    #
+    # XXX: Make this into a function
+
+    page_matches = find_hocr_matches(hocrfile)
+
+    #from pprint import pprint
+    #pprint(page_matches)
+
+    sequences = greedy_sequence_enumeration(page_matches)
+    ##pprint(sequences)
+
+    sequences = fill_holes(sequences)
+    #pprint(sequences)
+
+    trellis = create_graph(sequences, len(page_matches))
+    #pprint(trellis)
+
+    from viterbi_trellis import ViterbiTrellis
+    v = ViterbiTrellis(trellis, lambda x: 1., lambda x, y: x.get_cost(y))
+    best_path = v.viterbi_best_path()
+    #print(best_path)
+
+    pagenos = pagenos_from_trellis(best_path, trellis)
+
+    # TODO: Formal analysis with logistic regression
 
     page_json = create_page_json(pagenos)
     outfile_fp = open(outfile, 'w')
