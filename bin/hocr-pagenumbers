@@ -4,6 +4,7 @@ import sys
 import argparse
 
 import re
+from roman import fromRoman, toRoman, InvalidRomanNumeralError
 from hocr.parse import hocr_page_iterator, hocr_page_to_word_data
 
 # TODO:
@@ -20,6 +21,7 @@ from hocr.parse import hocr_page_iterator, hocr_page_to_word_data
 # - Maybe at the end, extrapolate outside of our regular bounds in case any
 #   values are still 'None' (but with much lower confidence)
 # - Add further extrapolation option (also logistic regression?)
+# - Optimise code some to prevent too many back and forth conversions
 
 # - Mention: "Versatile Page Numbering Analysis", Hervé Déjean, Jean-Luc Meunier
 #
@@ -51,7 +53,10 @@ class ArabicNumberingScheme(object):
         return v
 
     def is_increase(self, base, steps, check):
-        return base + steps == check
+        return base.num_value + steps == check.num_value
+
+    def numeral_value(self, s):
+        return int(s)
 
     def extrapolate_sequence(self, start, end):
         start_pageidx, start_pagenumber = start
@@ -60,24 +65,54 @@ class ArabicNumberingScheme(object):
         new_sequence = []
 
         for pageidx, val in zip(range(start_pageidx, end_pageidx+1),
-                                range(start_pagenumber.value, end_pagenumber.value+1)):
+                                range(int(start_pagenumber.num_value), int(end_pagenumber.num_value+1))):
             new_sequence.append((pageidx, PageNumberCandidate(val, self)))
 
         return new_sequence
 
 
+class RomanNumberingScheme(object):
+    SUPPORT_EXTRAPOLATION = True
 
-TEST_SCHEME = ArabicNumberingScheme()
+    def syntactic_match(self, s):
+        try:
+            v = fromRoman(s.upper())
+            return True
+        except InvalidRomanNumeralError:
+            return False
+
+    def is_increase(self, base, steps, check):
+        return base.num_value + steps == check.num_value
+
+    def numeral_value(self, s):
+        return fromRoman(s.upper())
+
+    def extrapolate_sequence(self, start, end):
+        start_pageidx, start_pagenumber = start
+        end_pageidx, end_pagenumber = end
+
+        new_sequence = []
+
+        for pageidx, val in zip(range(start_pageidx, end_pageidx+1),
+                                range(int(start_pagenumber.num_value), int(end_pagenumber.num_value+1))):
+            new_sequence.append((pageidx, PageNumberCandidate(toRoman(val), self)))
+
+        return new_sequence
+
+
+
 
 NUMBER_SCHEMES = [
     ArabicNumberingScheme(),
+    RomanNumberingScheme(),
 ]
 
 
 class PageNumberCandidate(object):
     def __init__(self, value, scheme):
         # page idx?
-        self.value = int(value)
+        self.value = value
+        self.num_value =  scheme.numeral_value(value)
         self.scheme = scheme
 
 
@@ -111,7 +146,7 @@ def fits_sequence(sequence, pageidx, match):
     last_seq_pageidx, last_seq_val = last_seq
     step = pageidx - last_seq_pageidx
 
-    if match.scheme.is_increase(last_seq_val.value, step, match.value) and match != last_seq_val and pageidx != last_seq_pageidx:
+    if match.scheme.is_increase(last_seq_val, step, match) and match != last_seq_val and pageidx != last_seq_pageidx:
         return True
 
     return False
