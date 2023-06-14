@@ -14,7 +14,7 @@ from hocr.parse import hocr_page_iterator, hocr_page_to_word_data
 # - Add confidence based on logistic regression and other data (maybe also word
 #   confidence?)
 # - Test with items in pagenumber-test-data - also the oddball ones (maybe add
-#   schemes for them)
+#   new schemes for them, like 'arabic +' - to allow (8) as 8, etc)
 # - Compare with ILL
 #
 # - Maybe at the end, extrapolate outside of our regular bounds in case any
@@ -35,10 +35,50 @@ from hocr.parse import hocr_page_iterator, hocr_page_to_word_data
 # tolerance for holes & allow extrapolation
 
 
+class ArabicNumberingScheme(object):
+    PAGENO_RE = re.compile(r'([A-Z]{1})?[0-9 ]+[-/]?([0-9 ]+)$')
+    SUPPORT_EXTRAPOLATION = True
+
+    def syntactic_match(self, s):
+        v = ArabicNumberingScheme.PAGENO_RE.match(s)
+
+        if v:
+            try:
+                int(s)
+            except:
+                v = False
+
+        return v
+
+    def is_increase(self, base, steps, check):
+        return base + steps == check
+
+    def extrapolate_sequence(self, start, end):
+        start_pageidx, start_pagenumber = start
+        end_pageidx, end_pagenumber = end
+
+        new_sequence = []
+
+        for pageidx, val in zip(range(start_pageidx, end_pageidx+1),
+                                range(start_pagenumber.value, end_pagenumber.value+1)):
+            new_sequence.append((pageidx, PageNumberCandidate(val, self)))
+
+        return new_sequence
+
+
+
+TEST_SCHEME = ArabicNumberingScheme()
+
 NUMBER_SCHEMES = [
+    ArabicNumberingScheme(),
 ]
 
-PAGENO_RE = re.compile(r'([A-Z]{1})?[0-9 ]+[-/]?([0-9 ]+)$')
+
+class PageNumberCandidate(object):
+    def __init__(self, value, scheme):
+        # page idx?
+        self.value = int(value)
+        self.scheme = scheme
 
 
 def find_hocr_matches(hocrfile):
@@ -52,16 +92,10 @@ def find_hocr_matches(hocrfile):
         for par in word_data:
             for line in par['lines']:
                 for word in line['words']:
-                    if PAGENO_RE.match(word['text']):
-                        num = word['text']
-
-                        #matches.append((word['text'], word['bbox'], pageidx))
-                        try:
-                            matches.append(int(word['text']))
-                        except ValueError:
-                            print('error:', word['text'])
-                            #raise
-                            pass # XXX
+                    for scheme in NUMBER_SCHEMES:
+                        if scheme.syntactic_match(word['text']):
+                            match = PageNumberCandidate(word['text'], scheme)
+                            matches.append(match)
 
         page_matches.append(matches)
 
@@ -71,12 +105,13 @@ def find_hocr_matches(hocrfile):
     return page_matches
 
 
-def fits_sequence(sequence, pageidx, num):
+def fits_sequence(sequence, pageidx, match):
     last_seq = sequence[-1]
 
-    if (pageidx - last_seq[0] == num - last_seq[1] and
-            num != last_seq[1] and
-            pageidx != last_seq[0]):
+    last_seq_pageidx, last_seq_val = last_seq
+    step = pageidx - last_seq_pageidx
+
+    if match.scheme.is_increase(last_seq_val.value, step, match.value) and match != last_seq_val and pageidx != last_seq_pageidx:
         return True
 
     return False
@@ -91,18 +126,18 @@ def greedy_sequence_enumeration(page_matches):
     density_threshold = 0.3
 
     for pageidx, matches in enumerate(page_matches):
-        for num in matches:
+        for match in matches:
             fits = False
 
             for seq in current_sequences:
-                if fits_sequence(seq, pageidx, num):
-                    seq.append((pageidx, num))
+                if fits_sequence(seq, pageidx, match):
+                    seq.append((pageidx, match))
                     fits = True
                     break
 
             # Create new sequence
             if not fits:
-                current_sequences.append([(pageidx, num)])
+                current_sequences.append([(pageidx, match)])
 
         # Figure out which sequences to park (so that we don't have to take them
         # into account in the analysis going forward)
@@ -217,15 +252,29 @@ def create_graph(sequences, page_count, F=5):
 
 
 def fill_holes(sequences):
-    return [list(zip(range(seq[0][0], seq[-1][0]+1), range(seq[0][1], seq[-1][1]+1)))
-            for seq in sequences]
+    new_sequences = []
+
+    for sequence in sequences:
+        scheme = sequence[0][1].scheme
+        if scheme.SUPPORT_EXTRAPOLATION:
+            start_pageidx = sequence[0][0]
+            end_pageidx = sequence[-1][0]
+            start_val = sequence[0][1]
+            end_val = sequence[-1][1]
+            new_sequence = scheme.extrapolate_sequence((start_pageidx, start_val),
+                                                       (end_pageidx, end_val))
+            new_sequences.append(new_sequence)
+        else:
+            new_sequences.append(sequence)
+
+    return new_sequences
 
 def create_page_json(pagenos):
     data = {'pages': [], 'confidence': 'todo', 'identifier': 'todo'}
 
     for (pageidx, pagenoval) in pagenos:
         data['pages'].append({'leafNum': pageidx,
-                              'pageNumber': pagenoval if pagenoval else ''})
+                              'pageNumber': pagenoval.value if pagenoval else ''})
 
     return data
 
