@@ -39,7 +39,6 @@ import argparse
 import json
 import random
 import re
-import sys
 
 import numpy as np
 from sklearn.linear_model import LogisticRegression
@@ -48,6 +47,7 @@ from viterbi_trellis import ViterbiTrellis
 
 from roman import fromRoman, toRoman, InvalidRomanNumeralError
 
+import hocr
 from hocr.parse import hocr_page_iterator, hocr_page_to_word_data, hocr_page_get_dimensions
 
 # TODO Code:
@@ -296,17 +296,6 @@ def extrapolate(scheme, sequence, start, end):
     return new_sequence
 
 
-
-NUMBER_SCHEMES = [
-    ArabicNumberingScheme(),
-    RomanNumberingScheme(),
-    SingleLetterNumberingScheme(),
-    # Various CompositeNumberingScheme's are added on the fly, since each scheme
-    # requires a seperate instance
-    # TODO: Add Generic ASCII family
-]
-
-
 class PageNumberCandidate(object):
     """
     Represents a single page number candidate.
@@ -328,13 +317,17 @@ class PageNumberCandidate(object):
     def __repr__(self):
         return self.value
 
-#
-# = 40 features
-#
-# >>> inp = ['x1', 'y1', 'x2', 'y2']
-# >>> mul = [(x, x) for x in inp] + list(itertools.combinations(inp, r=2))
-# >>> for l, r in mul:
-# ...     print('%s * %s' % (l, r))
+
+# Numbering schemes that are currently enabled and evaluated in this order.
+# Note that the various CompositeNumberingScheme's are added on the fly, since
+# each scheme requires a seperate instance
+NUMBER_SCHEMES = [
+    ArabicNumberingScheme(),
+    RomanNumberingScheme(),
+    SingleLetterNumberingScheme(),
+    # TODO: Add Generic ASCII family
+]
+
 
 def create_candidate_features(page_dim, page_contents_box, hocr_word, pageidx):
     """
@@ -435,11 +428,6 @@ def find_hocr_matches(hocrfile, filterfun=None):
                     if found:
                         break
 
-                    if text == '7':
-                        s = ArabicNumberingScheme()
-                        print(s.syntactic_match(text))
-                        raise Exception(text)
-
                     # If we haven't matched anything, consider a new composite
                     # scheme
                     fact = composite_factory(text)
@@ -473,6 +461,10 @@ def find_hocr_matches(hocrfile, filterfun=None):
 
 
 def fits_sequence(sequence, pageidx, match):
+    """
+    Returns whether a given match fits in the sequence by looking at the
+    last value of the sequence.
+    """
     last_seq = sequence[-1]
 
     last_seq_pageidx, last_seq_val = last_seq
@@ -485,6 +477,19 @@ def fits_sequence(sequence, pageidx, match):
 
 
 def greedy_sequence_enumeration(page_matches, density_threshold=0.3):
+    """
+    Turns the hOCR page matches into sequences in a greedy manner.
+    The density threshold is set to 30% for sequences; this could be changed
+    perhaps depending on the number scheme.
+
+    The overly simplified description of what this function does, quoting the
+    paper:
+
+    For each page:
+        For each text fragment of the page:
+            - either it fits with one of the running sequences
+            - or if its syntactic form is acceptable to a scheme, then a new sequence is initialized and fed with this observed number.
+    """
     current_sequences = []
     parked_sequences = []
 
@@ -530,6 +535,7 @@ def greedy_sequence_enumeration(page_matches, density_threshold=0.3):
 
 
 class State(object):
+    """ State in the Trellis graph """
     def __init__(self, pageidx, value):
         self.pageidx = pageidx
         self.value = value
@@ -559,9 +565,6 @@ class State(object):
 
 def create_graph(sequences, page_count, F=3):
     # XXX: This requires the gaps in sequences to be filled up
-
-    graph = []
-
     NONE_COST = 1. # Max cost
 
     page_states = {}
@@ -628,9 +631,11 @@ def fill_holes(sequences):
                                                        (end_pageidx, end_val))
             new_sequences.append(new_sequence)
         else:
+            # Just copy it over
             new_sequences.append(sequence)
 
     return new_sequences
+
 
 def viterbi_trellis(trellis):
     v = ViterbiTrellis(trellis, lambda x: 1., lambda x, y: x.get_cost(y))
@@ -676,7 +681,6 @@ def train_model(candidates, page_non_matches, pages_info):
 
     scaler = StandardScaler()
     X_ = scaler.fit_transform(X)
-    #y = scaler.transform(y)
 
     lr = LogisticRegression(C=1.0, solver='liblinear', random_state=SEED)
     clf = lr.fit(X_, y)
@@ -684,7 +688,7 @@ def train_model(candidates, page_non_matches, pages_info):
     #features = positive_features + negative_features
     #cnt = 0
     #for feature in positive_features:
-    #    npf = np.array(feature).reshape((1, 41))
+    #    npf = np.array(feature).reshape((1, NUM_FEATURES))
     #    npf = scaler.transform(npf)
     #    v = clf.predict(npf)
     #    if v > 0.:
@@ -694,7 +698,7 @@ def train_model(candidates, page_non_matches, pages_info):
 
     #cnt = 0
     #for feature in negative_features:
-    #    npf = np.array(feature).reshape((1, 41))
+    #    npf = np.array(feature).reshape((1, NUM_FEATURES))
     #    npf = scaler.transform(npf)
     #    v = clf.predict(npf)
     #    if v <= 0.:
@@ -707,7 +711,7 @@ def train_model(candidates, page_non_matches, pages_info):
     #    if candidate and not candidate.synthetic:
     #        feature = create_candidate_features(page_info[0], page_info[1],
     #                                            candidate.hocr, page_idx)
-    #        npf = np.array(feature).reshape((1, 41))
+    #        npf = np.array(feature).reshape((1, NUM_FEATURES))
     #        npf = scaler.transform(npf)
     #        print(clf.predict_log_proba(npf))
     #        print(clf.predict_proba(npf))
@@ -720,27 +724,39 @@ def train_model(candidates, page_non_matches, pages_info):
     return clf, scaler
 
 
-
-def pagenos_from_trellis(best_path, trellis):
-    pagenos = []
-
-    last_state = None
-    for page_idx, (choice_idx, vals) in enumerate(zip(best_path, trellis)):
-        last_state = vals[choice_idx]
-        pagenos.append((page_idx, last_state.value))
-
-    return pagenos
-
-
 def create_page_json(pagenos):
-    data = {'pages': [], 'confidence': 'todo', 'identifier': 'todo'}
+    data = {
+            'identifier': 'todo', # basename of input?
+            'confidence': None, # TODO
+            'archive-hocr-tools-version': hocr.__version__,
+            'pages': [],
+    }
+
+    # TODO: Determine general confidence of the files
+    #
+    # I guess we want the general confidence to be a function of:
+    # * # pages we found a number for
+    # * # pages we inferred a number for
+    # * avg confidence of the pages per found a page number for
+    #
+    #
+    #
+    # For the per-page confidence, we can use:
+    # * the probability
+    # * whether is gap-filled and synthetic or not
+    # * whether it was synthetic and filled towards the 'edges'
 
     for (pageidx, pagenoval) in pagenos:
         # TODO: add pagenumber as string, and then also another interpretation
         # in case it is a composite page number?
-        data['pages'].append({'leafNum': pageidx,
-                              'pageNumber': str(pagenoval.value) if pagenoval else '',
-                              'pageProb': int(pagenoval.prob[1] * 100) if pagenoval and pagenoval.prob is not None else ''})
+        page_json_data = {
+                'leafNum': pageidx,
+                'confidence': None,
+                'pageNumber': str(pagenoval.value) if pagenoval else '',
+                'pageProb': int(pagenoval.prob[1] * 100) if pagenoval and pagenoval.prob is not None else None
+        }
+
+        data['pages'].append(page_json_data)
 
     return data
 
@@ -750,13 +766,9 @@ def process_file(hocrfile, outfile, two_pass=True):
     page_matches, page_non_matches, page_info = find_hocr_matches(hocrfile)
 
     sequences = greedy_sequence_enumeration(page_matches)
-
-    # If we're not doing a logistic regression we can fill the gaps now
     if not two_pass:
         sequences = fill_holes(sequences)
-
     trellis = create_graph(sequences, len(page_matches))
-
     best_path = viterbi_trellis(trellis)
 
     if two_pass:
@@ -780,14 +792,12 @@ def process_file(hocrfile, outfile, two_pass=True):
             return v, p
 
         page_matches, _, _ = find_hocr_matches(hocrfile, filterfun=prediction_filter)
-
-        sequences = greedy_sequence_enumeration(page_matches,
-                                                  density_threshold=0.3)
+        sequences = greedy_sequence_enumeration(page_matches, density_threshold=0.3)
         sequences = fill_holes(sequences)
         trellis = create_graph(sequences, len(page_matches), F=1)
         best_path = viterbi_trellis(trellis)
 
-    pagenos = pagenos_from_trellis(best_path, trellis)
+    pagenos = candidates_from_trellis(best_path, trellis)
 
     page_json = create_page_json(pagenos)
     with open(outfile, 'w') as outfile_fp:
