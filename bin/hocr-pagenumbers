@@ -5,7 +5,7 @@ import argparse
 
 import re
 from roman import fromRoman, toRoman, InvalidRomanNumeralError
-from hocr.parse import hocr_page_iterator, hocr_page_to_word_data
+from hocr.parse import hocr_page_iterator, hocr_page_to_word_data, hocr_page_get_dimensions
 
 # TODO:
 #
@@ -17,6 +17,13 @@ from hocr.parse import hocr_page_iterator, hocr_page_to_word_data
 # - Test with items in pagenumber-test-data - also the oddball ones (maybe add
 #   new schemes for them, like 'arabic +' - to allow (8) as 8, etc)
 # - Compare with ILL
+#
+# - Add different length (density_threshold) and F parameters for roman and composite sequences
+#
+# - Add some filter based on how far it is from the edge of the page (only 20% # maybe?)
+#
+# - Add some limit to composites just in case...
+# - Add the ability to allow missing numbers in sequences
 #
 # - Maybe at the end, extrapolate outside of our regular bounds in case any
 #   values are still 'None' (but with much lower confidence)
@@ -32,22 +39,33 @@ from hocr.parse import hocr_page_iterator, hocr_page_to_word_data
 # * (7), (8), (9), etc
 
 
+SKIP_NO_EDGE = True
+
 COMPOSITE_ANY_RE = re.compile(r'.*\d.*')
 COMPOSITE_DIGIT_SUB = re.compile(r'\d+')
 COMPOSITE_DIGIT_RE = re.compile('\d+')
-COMPOSITE_SIMPLE_RES = [re.compile('^[A-Z]+-?\d+$'), re.compile('^\d+-?[A-Z]+$'),
-                        re.compile('^\(\d+\)\(\d+\)$'), re.compile('^\(\d+\)\d+$'),]
+COMPOSITE_SIMPLE_RES = [re.compile('^\(\d+\)'),
+                        re.compile('^[A-Z]+-?\d+$'), re.compile('^\d+-?[A-Z]+$'),
+                        re.compile('^\(\d+\)\(\d+\)$'), re.compile('^\(\d+\)\d+$'),
+                        re.compile('^\d+/\d+$'), re.compile('^\d+\.\d+$')]
 
 
-def extrapolate(scheme, start, end):
+def extrapolate(scheme, sequence, start, end):
     start_pageidx, start_pagenumber = start
     end_pageidx, end_pagenumber = end
 
     new_sequence = []
 
+    seqmap = dict(sequence)
+
     for pageidx, val in zip(range(start_pageidx, end_pageidx+1),
                             range(int(start_pagenumber.num_value), int(end_pagenumber.num_value+1))):
-        new_sequence.append((pageidx, PageNumberCandidate(scheme.from_num(val), scheme)))
+        if pageidx in seqmap:
+            pagenumbercandidate = seqmap[pageidx]
+            new_sequence.append((pageidx, pagenumbercandidate))
+        else:
+            newcandidate = PageNumberCandidate(scheme.from_num(val), scheme, False)
+            new_sequence.append((pageidx, newcandidate))
 
     return new_sequence
 
@@ -74,11 +92,10 @@ class ArabicNumberingScheme(object):
         return int(s)
 
     def from_num(self, n):
-        return n
-        #return str(n)
+        return str(n)
 
-    def extrapolate_sequence(self, start, end):
-        return extrapolate(self, start, end)
+    def extrapolate_sequence(self, sequence, start, end):
+        return extrapolate(self, sequence, start, end)
 
 
 class RomanNumberingScheme(object):
@@ -100,8 +117,8 @@ class RomanNumberingScheme(object):
     def from_num(self, n):
         return toRoman(n)
 
-    def extrapolate_sequence(self, start, end):
-        return extrapolate(self, start, end)
+    def extrapolate_sequence(self, sequence, start, end):
+        return extrapolate(self, sequence, start, end)
 
 
 class SingleLetterNumberingScheme(object):
@@ -120,8 +137,8 @@ class SingleLetterNumberingScheme(object):
     def from_num(self, n):
         return chr(n)
 
-    def extrapolate_sequence(self, start, end):
-        return extrapolate(self, start, end)
+    def extrapolate_sequence(self, sequence, start, end):
+        return extrapolate(self, sequence, start, end)
 
 
 class CompositeNumberingScheme(object):
@@ -129,7 +146,7 @@ class CompositeNumberingScheme(object):
 
     def __init__(self, val):
         self.orig_val = val
-        #self.count = len(COMPOSITE_DIGIT_RE.findall(val))
+        self.count = len(COMPOSITE_DIGIT_RE.findall(val))
         self.format = COMPOSITE_DIGIT_SUB.sub(r'%d', val.replace('%', '%%'))
         self.composite_scheme = '^' + COMPOSITE_DIGIT_SUB.sub(r'\\d+', re.escape(val)) + '$'
         self.comp_re = re.compile(self.composite_scheme)
@@ -172,18 +189,20 @@ class CompositeNumberingScheme(object):
             idx += 1
             r = (n // self.MUL**idx) % self.MUL
 
-        #if len(digits) != self.count:
-        #    digits += [0]
+        if len(digits) != self.count:
+            digits += [0] * (self.count - len(digits))
+
         digits = tuple(reversed(digits))
 
         #print('orig:', self.orig_val)
         #print('comp:', self.composite_scheme)
         #print('format and digits:', self.format, digits)
+        #print('n:', n)
         v = self.format % digits
         return v
 
-    def extrapolate_sequence(self, start, end):
-        return extrapolate(self, start, end)
+    def extrapolate_sequence(self, sequence, start, end):
+        return extrapolate(self, sequence, start, end)
 
 
 def composite_factory(val):
@@ -201,15 +220,19 @@ NUMBER_SCHEMES = [
     ArabicNumberingScheme(),
     RomanNumberingScheme(),
     SingleLetterNumberingScheme(),
+    # Various CompositeNumberingScheme's are added on the fly
+    # TODO: Add Generic ASCII family
 ]
 
 
 class PageNumberCandidate(object):
-    def __init__(self, value, scheme):
-        # page idx?
+    def __init__(self, value, scheme, synthetic):
         self.value = value
         self.num_value =  scheme.numeral_value(value)
         self.scheme = scheme
+        self.synthetic = synthetic
+
+        # TODO: properties for formal analysis / logistic regression
 
 
 def find_hocr_matches(hocrfile):
@@ -219,17 +242,32 @@ def find_hocr_matches(hocrfile):
 
     page_stop = 10000
     for pageidx, page in enumerate(hocr_page_iterator(hocrfile)):
+        page_width, page_height = hocr_page_get_dimensions(page)
+        w_20 = page_width // 5
+        h_20 = page_height // 5
+        w_80 = page_width - w_20
+        h_80 = page_height - h_20
+
         word_data = hocr_page_to_word_data(page)
         matches = []
 
         for par in word_data:
             for line in par['lines']:
                 for word in line['words']:
+                    if SKIP_NO_EDGE:
+                        x1, y1, x2, y2 = word['bbox']
+                        if not (x1 < w_20 or y1 < h_20 or x2 > w_80 or y2 > h_80):
+                            continue
+
+
+
+                    # TODO: Limit to 20% from left/right or top/bottom of page?
+                    # make this a toggle?
                     text = word['text']
                     found = False
                     for scheme in NUMBER_SCHEMES + composite_schemes:
                         if scheme.syntactic_match(text):
-                            match = PageNumberCandidate(text, scheme)
+                            match = PageNumberCandidate(text, scheme, False)
                             matches.append(match)
                             found = True
 
@@ -249,7 +287,7 @@ def find_hocr_matches(hocrfile):
                     fact = composite_factory(text)
                     if fact:
                         composite_schemes.append(fact)
-                        match = PageNumberCandidate(text, fact)
+                        match = PageNumberCandidate(text, fact, False)
                         matches.append(match)
 
         page_matches.append(matches)
@@ -350,7 +388,7 @@ class State(object):
 
 
 # TODO: This is sequence selection
-# TODO: Should F=5, or some other value ??
+# TODO: Should F=5, or some other value ?? perhaps per numberingscheme?
 def create_graph(sequences, page_count, F=5):
     # XXX: This requires the gaps in sequences to be filled up
 
@@ -416,7 +454,9 @@ def fill_holes(sequences):
             end_pageidx = sequence[-1][0]
             start_val = sequence[0][1]
             end_val = sequence[-1][1]
-            new_sequence = scheme.extrapolate_sequence((start_pageidx, start_val),
+
+            new_sequence = scheme.extrapolate_sequence(sequence,
+                                                       (start_pageidx, start_val),
                                                        (end_pageidx, end_val))
             new_sequences.append(new_sequence)
         else:
@@ -428,8 +468,11 @@ def create_page_json(pagenos):
     data = {'pages': [], 'confidence': 'todo', 'identifier': 'todo'}
 
     for (pageidx, pagenoval) in pagenos:
+        # TODO: add pagenumber as string, and then also another interpretation
+        # in case it is a composite page number?
         data['pages'].append({'leafNum': pageidx,
-                              'pageNumber': pagenoval.value if pagenoval else ''})
+                              'pageNumber': str(pagenoval.value) if pagenoval else ''})
+                              #'pageNumber': pagenoval.value if pagenoval else ''})
 
     return data
 
