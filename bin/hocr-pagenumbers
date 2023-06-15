@@ -350,12 +350,12 @@ def create_candidate_features(page_dim, page_contents_box, hocr_word, pageidx):
     features[4:14] = [x1 * x1, y1 * y1, x2 * x2, y2 * y2, x1 * y1, x1 * x2,
                       x1 * y2, y1 * x2, y1 * y2, x2 * y2]
     # Page ratio
-    features[15] = page_dim[0] / page_dim[1]
-    features[16:20] = page_contents_box
+    features[14] = page_dim[0] / page_dim[1]
+    features[15:19] = page_contents_box
     # Page parity bit
-    features[20] = 1 if pageidx % 2 == 0 else -1
+    features[19] = 1 if pageidx % 2 == 0 else -1
     # Parity bit multiplication of previous features
-    features[21:40] = features[0:19] * features[20]
+    features[20:39] = features[0:19] * features[20]
     # Font size feature, multiply by 100 so we don't lose float accurate as much
     # in int (if it really ever even is a float)
     features[40] = int(hocr_word['fontsize'] * 100)
