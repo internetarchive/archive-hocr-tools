@@ -2,8 +2,9 @@
 """
 This program will analyse a hOCR document and attempts to find numbers that are
 convievably page numbers based on various numbering schemes, sequence selection
-using the Viterbi best path algorithm and logistic regression of the actual
-pages numbers that were found.  The output is a simple JSON file.
+using the Viterbi best path algorithm and logistic regression (or naive bayes
+classifier) of the actual pages numbers that were found.
+The output is a simple JSON file.
 
 The method used by this program is inspired by the "Versatile Page Numbering
 Analysis" paper [1] [2] by Hervé Déjean and Jean-Luc Meunier
@@ -42,6 +43,7 @@ import re
 
 import numpy as np
 from sklearn.linear_model import LogisticRegression
+from sklearn.naive_bayes import GaussianNB
 from sklearn.preprocessing import StandardScaler
 from viterbi_trellis import ViterbiTrellis
 
@@ -377,6 +379,7 @@ def find_hocr_matches(hocrfile, filterfun=None):
 
     page_stop = 10000
     for pageidx, page in enumerate(hocr_page_iterator(hocrfile)):
+        # TODO: Make this filter a toggle?
         page_width, page_height = hocr_page_get_dimensions(page)
         w_20 = page_width // 5
         h_20 = page_height // 5
@@ -409,8 +412,6 @@ def find_hocr_matches(hocrfile, filterfun=None):
                         if v <= 0:
                             continue
 
-                    # TODO: Limit to 20% from left/right or top/bottom of page?
-                    # make this a toggle?
                     text = word['text']
                     found = False
                     for scheme in NUMBER_SCHEMES + composite_schemes:
@@ -651,7 +652,7 @@ def candidates_from_trellis(best_path, trellis):
     return results
 
 
-def train_model(candidates, page_non_matches, pages_info):
+def train_model(candidates, page_non_matches, pages_info, classifier='naivebayes'):
     positive_features = []
     negative_features = []
 
@@ -682,44 +683,14 @@ def train_model(candidates, page_non_matches, pages_info):
     scaler = StandardScaler()
     X_ = scaler.fit_transform(X)
 
-    lr = LogisticRegression(C=1.0, solver='liblinear', random_state=SEED)
+    if classifier == 'naivebayes':
+        lr = GaussianNB()
+    elif classifier == 'logisticregression':
+        lr = LogisticRegression(C=1.0, solver='liblinear', random_state=SEED)
+    else:
+        raise ValueError('Invalid classifier')
+
     clf = lr.fit(X_, y)
-
-    #features = positive_features + negative_features
-    #cnt = 0
-    #for feature in positive_features:
-    #    npf = np.array(feature).reshape((1, NUM_FEATURES))
-    #    npf = scaler.transform(npf)
-    #    v = clf.predict(npf)
-    #    if v > 0.:
-    #        cnt += 1
-
-    #print('P Total:', len(positive_features), 'correct:', cnt)
-
-    #cnt = 0
-    #for feature in negative_features:
-    #    npf = np.array(feature).reshape((1, NUM_FEATURES))
-    #    npf = scaler.transform(npf)
-    #    v = clf.predict(npf)
-    #    if v <= 0.:
-    #        cnt += 1
-    #    #print('N', v)
-    #print('N Total:', len(negative_features), 'correct:', cnt)
-
-    #for page_idx, candidate in candidates:
-    #    page_info = pages_info[page_idx]
-    #    if candidate and not candidate.synthetic:
-    #        feature = create_candidate_features(page_info[0], page_info[1],
-    #                                            candidate.hocr, page_idx)
-    #        npf = np.array(feature).reshape((1, NUM_FEATURES))
-    #        npf = scaler.transform(npf)
-    #        print(clf.predict_log_proba(npf))
-    #        print(clf.predict_proba(npf))
-    #        v = clf.predict(npf)
-    #        if v > 0:
-    #            print('Accept;', candidate.value)
-    #        else:
-    #            print('Reject:', candidate.value)
 
     return clf, scaler
 
@@ -761,7 +732,24 @@ def create_page_json(pagenos):
     return data
 
 
-def process_file(hocrfile, outfile, two_pass=True):
+def prediction_filter(lg_classifier, lg_scaler, page_info, page_idx, word_hocr):
+    pinfo = page_info[page_idx]
+    feature = create_candidate_features(pinfo[0], pinfo[1],
+                                        word_hocr, page_idx)
+    npf = np.array(feature).reshape((1, NUM_FEATURES))
+    npf = lg_scaler.transform(npf)
+    # We maybe don't need to predict twice here, we could perhaps just
+    # interpret p ourselves
+    v = lg_classifier.predict(npf)
+    p = lg_classifier.predict_proba(npf)
+
+    v = v[0]
+    p = p[0]
+
+    return v, p
+
+
+def process_file(hocrfile, outfile, classifier, two_pass=True):
     # Step 1: find candidates for each page (with coords)
     page_matches, page_non_matches, page_info = find_hocr_matches(hocrfile)
 
@@ -776,22 +764,9 @@ def process_file(hocrfile, outfile, two_pass=True):
 
         lg_classifier, lg_scaler = train_model(candidates, page_non_matches, page_info)
 
-        def prediction_filter(page_idx, hocr):
-            pinfo = page_info[page_idx]
-            feature = create_candidate_features(pinfo[0], pinfo[1],
-                                                hocr, page_idx)
-            npf = np.array(feature).reshape((1, NUM_FEATURES))
-            npf = lg_scaler.transform(npf)
-            # TODO: We don't need to predict twice here
-            v = lg_classifier.predict(npf)
-            p = lg_classifier.predict_proba(npf)
-
-            v = v[0]
-            p = p[0]
-
-            return v, p
-
-        page_matches, _, _ = find_hocr_matches(hocrfile, filterfun=prediction_filter)
+        fun = lambda page_idx, word: prediction_filter(lg_classifier, lg_scaler,
+                                                      page_info, page_idx, word)
+        page_matches, _, _ = find_hocr_matches(hocrfile, filterfun=fun)
         sequences = greedy_sequence_enumeration(page_matches, density_threshold=0.3)
         sequences = fill_holes(sequences)
         trellis = create_graph(sequences, len(page_matches), F=1)
@@ -814,4 +789,4 @@ if __name__ == '__main__':
 
     random.seed(SEED)
 
-    process_file(args.infile, args.outfile)
+    process_file(args.infile, args.outfile, 'naivebayes')
