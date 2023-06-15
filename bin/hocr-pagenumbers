@@ -79,8 +79,13 @@ from hocr.parse import hocr_page_iterator, hocr_page_to_word_data, hocr_page_get
 
 
 SKIP_NO_EDGE = True
-NEGATIVES_PER_PAGE = 10
 COMPOSITE_LIMIT = 1000
+
+
+NUM_FEATURES = 40
+NEGATIVES_PER_PAGE = 10
+
+SEED = 42 # For reproducability
 
 COMPOSITE_ANY_RE = re.compile(r'.*\d.*')
 COMPOSITE_DIGIT_SUB = re.compile(r'\d+')
@@ -340,25 +345,30 @@ def create_candidate_features(page_dim, page_contents_box, hocr_word, pageidx):
     - Pageidx parity bit and all above features multiplied by parity bit (20 features)
     - Typography: currently just font size (1 feature)
     """
-    # We have 41 features
-    features = np.ndarray((41,), dtype=np.int32)
+    features = np.ndarray((NUM_FEATURES,), dtype=np.int32)
 
-    # Word bbox
+    # Word bbox (4 features)
     x1, y1, x2, y2 = hocr_word['bbox']
+
+    x1 = int(x1)
+    y1 = int(y1)
+    x2 = int(x2)
+    y2 = int(y2)
+
     features[0:4] = [x1, y1, x2, y2]
-    # Quadratic combination of word bbox
+    # Quadratic combination of word bbox (10 features)
     features[4:14] = [x1 * x1, y1 * y1, x2 * x2, y2 * y2, x1 * y1, x1 * x2,
                       x1 * y2, y1 * x2, y1 * y2, x2 * y2]
-    # Page ratio
-    features[14] = page_dim[0] / page_dim[1]
-    features[15:19] = page_contents_box
-    # Page parity bit
+    # Page ratio (1 feature)
+    features[14] = int(page_dim[0]) / int(page_dim[1])
+    # Bounding box of found content of the page (4 features)
+    features[15:19] = [int(x) for x in page_contents_box]
+    # Page parity bit (1 feature)
     features[19] = 1 if pageidx % 2 == 0 else -1
-    # Parity bit multiplication of previous features
-    features[20:39] = features[0:19] * features[20]
-    # Font size feature, multiply by 100 so we don't lose float accurate as much
-    # in int (if it really ever even is a float)
-    features[40] = int(hocr_word['fontsize'] * 100)
+    # Parity bit multiplication of previous features (20 features)
+    features[20:39] = features[:19] * features[19]
+    # Font size (1 feature)
+    features[39] = int(hocr_word['fontsize'])
 
     return features
 
@@ -658,7 +668,7 @@ def train_model(candidates, page_non_matches, pages_info):
 
     total_features = len(positive_features) + len(negative_features)
 
-    X = np.ndarray((total_features, 41), dtype=np.int32)
+    X = np.ndarray((total_features, NUM_FEATURES), dtype=np.int32)
     X[0:len(positive_features)] = np.array(positive_features)
     X[len(positive_features):] = np.array(negative_features)
 
@@ -668,7 +678,7 @@ def train_model(candidates, page_non_matches, pages_info):
     X_ = scaler.fit_transform(X)
     #y = scaler.transform(y)
 
-    lr = LogisticRegression(C=1.0, solver='liblinear')
+    lr = LogisticRegression(C=1.0, solver='liblinear', random_state=SEED)
     clf = lr.fit(X_, y)
 
     #features = positive_features + negative_features
@@ -758,7 +768,7 @@ def process_file(hocrfile, outfile, two_pass=True):
             pinfo = page_info[page_idx]
             feature = create_candidate_features(pinfo[0], pinfo[1],
                                                 hocr, page_idx)
-            npf = np.array(feature).reshape((1, 41))
+            npf = np.array(feature).reshape((1, NUM_FEATURES))
             npf = lg_scaler.transform(npf)
             # TODO: We don't need to predict twice here
             v = lg_classifier.predict(npf)
@@ -791,5 +801,7 @@ if __name__ == '__main__':
     parser.add_argument('-o', '--outfile', help='Filename to write to',
                         type=str, default=None)
     args = parser.parse_args()
+
+    random.seed(SEED)
 
     process_file(args.infile, args.outfile)
