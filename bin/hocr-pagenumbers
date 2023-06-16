@@ -31,7 +31,33 @@ The program performs the following steps:
        (train_model)
     6. Perform step 1-4 again, rejecting any element that doesn't get classified
        as a page number using the classifier trained in step 5.
-    7. Write out the JSON file
+    7. Perform some validation and confidence calculation
+    8. Write out the JSON file
+
+The document confidence is calculated from the following 5 observations:
+
+    1. The amount of pages numbered (either through direct observation of
+       inference) divided by the total number of pages, allowing for 20%
+       of the pages not to be numbered to still achieve a perfect score;
+
+    2. The amount of pages where a number was found by direct observation,
+       divided by the total number of pages, allowing for 70% of the pages not to
+        be numbered to still achieve a perfect score;
+
+    3.  The amount of page numbered found by direct observation divided the
+        total number of numbered pages (by observation plus inference) found -
+        penalising if over 32% of the pages aren't "real" observations
+
+    4.  The average of the page probability, penalised when average the page
+        probability drops below 90%
+
+    5.  The amount of pages (in the entire item) divided by the final amount of
+        page number sequences. Penalised when sequence contains (on average) less
+        than 50 pages. The idea is here that we might find many "sub sequences" of
+        page numbers that aren't actually page numbers, but those don't tend to be
+        very long. So having many sequences that each do not span too many pages is
+        a problem. If there are a few short sequences and a really long one, this
+        should not hurt the confidence
 
 Author: Merlijn Wajer <merlijn@archive.org> / <merlijn@wizzup.org>
 """
@@ -55,16 +81,9 @@ from hocr.parse import hocr_page_iterator, hocr_page_to_word_data, hocr_page_get
 # TODO Code:
 #
 # - Clean up code
-# - Add confidence based on logistic regression and other data (maybe also word
-#   confidence?)
 # - Add confidence for synthetic pages too
 # - Add code documentation
 # - Add ASCII number scheme?
-#
-# - Maybe at the end, extrapolate outside of our regular bounds in case any
-#   values are still 'None' (but with much lower confidence)
-# - Optimise code some to prevent too many back and forth conversions and
-#   predictions
 #
 # TODO not code:
 # - Test with items in pagenumber-test-data - also the oddball ones (maybe add
@@ -74,7 +93,6 @@ from hocr.parse import hocr_page_iterator, hocr_page_to_word_data, hocr_page_get
 #
 # TO HANDLE:
 # * Handle 22/314, 23/315, ... 71/363
-#
 #
 # To consider:
 # * Add different length (density_threshold) and F parameters for roman and composite sequences?
@@ -87,7 +105,8 @@ COMPOSITE_LIMIT = 1000
 NUM_FEATURES = 40
 NEGATIVES_PER_PAGE = 10
 
-SEED = 42 # For reproducability
+# For reproducability purposes
+SEED = 42
 
 COMPOSITE_ANY_RE = re.compile(r'.*\d.*')
 COMPOSITE_DIGIT_SUB = re.compile(r'\d+')
@@ -96,6 +115,8 @@ COMPOSITE_SIMPLE_RES = [re.compile('^\(\d+\)'),
                         re.compile('^[A-Z]+-?\d+$'), re.compile('^\d+-?[A-Z]+$'),
                         re.compile('^\(\d+\)\(\d+\)$'), re.compile('^\(\d+\)\d+$'),
                         re.compile('^\d+/\d+$'), re.compile('^\d+\.\d+$')]
+
+TRELLIS_NONE_COST = 2. # To 'None' nodes
 
 
 class ArabicNumberingScheme(object):
@@ -311,8 +332,10 @@ class PageNumberCandidate(object):
         self.num_value =  scheme.numeral_value(value)
         self.scheme = scheme
         self.synthetic = synthetic
-        if not self.synthetic:
-            self.hocr = hocr
+        self.hocr = hocr
+
+        if self.hocr is not None and self.synthetic:
+            raise ValueError('Cannot have synthetic value with hOCR data')
 
         self.prob = None
 
@@ -404,7 +427,6 @@ def find_hocr_matches(hocrfile, filterfun=None):
                     if SKIP_NO_EDGE:
                         if not (x1 < w_20 or y1 < h_20 or x2 > w_80 or y2 > h_80):
                             continue
-
 
                     v, p = None, None
                     if filterfun:
@@ -549,11 +571,10 @@ class State(object):
     def get_cost(self, other_state):
         try:
             return self.links[other_state]
-        except:
-            # TODO: Investigate this, we really want the cost to be defined for
-            # everything
-            #print('Failed for page idx %d with value %s and page idx %d with value %s' % (self.pageidx, self.value, other_state.pageidx, other_state.value))
-            return 2.
+        except KeyError:
+            # Max cost, the ViterbiTrellis class tends to follow links that
+            # don't even exist
+            return TRELLIS_NONE_COST + 1.
 
     def __repr__(self):
         return '(%s, %s)' % (self.pageidx, self.value)
@@ -566,10 +587,9 @@ class State(object):
 
 
 def create_graph(sequences, page_count, F=3):
-    # XXX: This requires the gaps in sequences to be filled up
-    NONE_COST = 2. # Max cost
-
     page_states = {}
+
+    # Every page has a None state (we have no better candidate)
     for page in range(page_count):
         page_states[page] = [State(page, None)]
 
@@ -602,12 +622,11 @@ def create_graph(sequences, page_count, F=3):
         for prev_page_state in prev_page_states:
             # TODO: We might want some of these to be negative if a state is
             # leaving its sequence early
-            prev_page_state.link(current_none_state, NONE_COST)
+            prev_page_state.link(current_none_state, TRELLIS_NONE_COST)
 
         prev_page_none_state = prev_page_states[0]
         for page_state in page_states[page]:
-            prev_page_none_state.link(page_state, NONE_COST)
-
+            prev_page_none_state.link(page_state, TRELLIS_NONE_COST)
 
 
     list_page_states = []
@@ -637,6 +656,62 @@ def fill_holes(sequences):
             new_sequences.append(sequence)
 
     return new_sequences
+
+
+def fill_opportunistic(pagenos):
+    # Find the first real number and see if we can go back to fill up 'None'
+    # entries
+    # Then do find the last number and try to do the same that way
+    pdict = dict(pagenos)
+
+    current_idx = 0
+    while current_idx < len(pagenos):
+        if pdict[current_idx] is not None:
+            fill_idx = current_idx
+            val = pdict[current_idx]
+
+            # TODO: only do this if scheme supports aggressive extrapolate, this
+            # gets tricky with the non-simple composite, we can do it only for
+            # one-digit composite schemes (scheme.count == 1)
+
+            fill_scheme = val.scheme
+            fill_val = pdict[current_idx].num_value
+
+            while fill_val > 1 and fill_idx > 0:
+                fill_idx -= 1
+                fill_val -= 1
+
+                pagenos[fill_idx] = (fill_idx, PageNumberCandidate(fill_scheme.from_num(fill_val), fill_scheme, True))
+
+            break
+
+        current_idx += 1
+
+    current_idx = len(pagenos) - 1
+    while current_idx > 0:
+        if pdict[current_idx] is not None:
+            fill_idx = current_idx
+            val = pdict[current_idx]
+
+            # TODO: only do this if scheme supports aggressive extrapolate, this
+            # gets tricky with the non-simple composite, we can do it only for
+            # one-digit composite schemes (scheme.count == 1)
+
+            fill_scheme = val.scheme
+            fill_val = pdict[current_idx].num_value
+
+            while fill_idx < len(pagenos) - 1:
+                fill_idx += 1
+                fill_val += 1
+
+                pagenos[fill_idx] = (fill_idx, PageNumberCandidate(fill_scheme.from_num(fill_val), fill_scheme, True))
+
+            break
+
+        current_idx -= 1
+
+
+    return pagenos
 
 
 def viterbi_trellis(trellis):
@@ -687,6 +762,7 @@ def train_model(candidates, page_non_matches, pages_info, classifier='naivebayes
     if classifier == 'naivebayes':
         lr = GaussianNB()
     elif classifier == 'logisticregression':
+        # For reproducability purposes we pass the seed
         lr = LogisticRegression(C=1.0, solver='liblinear', random_state=SEED)
     else:
         raise ValueError('Invalid classifier')
@@ -696,19 +772,66 @@ def train_model(candidates, page_non_matches, pages_info, classifier='naivebayes
     return clf, scaler
 
 
-def create_page_json(pagenos):
+def get_document_confidence(pagenos, sequences, refined_seq):
+    ALLOW_MISS = 0.2 # 20% of pages without a page number is still ok
+    ALLOW_MISS_FOUND = 0.7 # We think we can be happy if 30% of the pages actually exist in OCR
+
+    SYNTH_ALLOW = 2/3 # Penalise if 33% or less pages are not 'real'
+    PAGE_PROB_ADD = 0.1
+    REQ_PAGES_PER_SEQ = 50
+    #PAGE_WORD_CONF_ADD = 0.25 # This is tricky because Abbyy finds very
+
+    pagenos_found_plus_synth = list(filter(lambda x: x[1] is not None, pagenos))
+    pagenos_found = list(filter(lambda x: x[1] is not None and not x[1].synthetic, pagenos))
+    total_pages = len(pagenos)
+
+    page_probs = list(map(lambda x: x[1].prob[1], pagenos_found))
+    page_prob_avg = sum(page_probs) / len(page_probs)
+
+    page_word_confs = list(map(lambda x: x[1].hocr['confidence'], pagenos_found))
+    page_word_conf_avg = sum(page_word_confs) / len(page_word_confs)
+
+    page_infer_ratio = len(pagenos_found_plus_synth) / total_pages
+    page_found_ratio = len(pagenos_found) / total_pages
+    page_synth_ratio = len(pagenos_found) / len(pagenos_found_plus_synth)
+
+
+    confidence = min(1., page_infer_ratio + ALLOW_MISS)
+    confidence *= min(1., page_found_ratio + ALLOW_MISS_FOUND)
+    confidence *= min(1., page_synth_ratio + SYNTH_ALLOW)
+    confidence *= min(1., page_prob_avg + PAGE_PROB_ADD)
+
+    pages_per_seq = total_pages / len(refined_seq)
+    pages_per_seq_un = total_pages / len(sequences)
+
+    confidence *= min(1., pages_per_seq / min(REQ_PAGES_PER_SEQ, total_pages))
+    #confidence *= min(1., page_word_conf_avf + PAGE_WORD_CONF_ADD)
+
+    return confidence
+
+
+def create_page_json(pagenos, document_conf, identifier):
     data = {
-            'identifier': 'todo', # basename of input?
-            'confidence': None, # TODO
+             # To differentiate from output made from a different program
+            'identifier': identifier,
+            'format-version': '2',
             'archive-hocr-tools-version': hocr.__version__,
+            'confidence': int(document_conf * 100),
             'pages': [],
     }
+
+
+    # TODO: Do something with the length of sequences
+
+
+
 
     # TODO: Determine general confidence of the files
     #
     # I guess we want the general confidence to be a function of:
     # * # pages we found a number for
     # * # pages we inferred a number for
+    # * Ratio of pages we found and pages we inferred a number for
     # * avg confidence of the pages per found a page number for
     #
     #
@@ -725,7 +848,8 @@ def create_page_json(pagenos):
                 'leafNum': pageidx,
                 'confidence': None,
                 'pageNumber': str(pagenoval.value) if pagenoval else '',
-                'pageProb': int(pagenoval.prob[1] * 100) if pagenoval and pagenoval.prob is not None else None
+                'pageProb': int(pagenoval.prob[1] * 100) if pagenoval and pagenoval.prob is not None else None,
+                'wordConf': int(pagenoval.hocr['confidence']) if pagenoval and pagenoval.hocr is not None else None
         }
 
         data['pages'].append(page_json_data)
@@ -741,41 +865,68 @@ def prediction_filter(lg_classifier, lg_scaler, page_info, page_idx, word_hocr):
     npf = lg_scaler.transform(npf)
     # We maybe don't need to predict twice here, we could perhaps just
     # interpret p ourselves
-    v = lg_classifier.predict(npf)
+    #v = lg_classifier.predict(npf)
     p = lg_classifier.predict_proba(npf)
 
-    v = v[0]
+    #v = v[0]
     p = p[0]
+
+    # XXX: It's not clear if this is how it works (!!!)
+    #      Needs a lot of testing
+    v = p[1] > 0.5
 
     return v, p
 
 
-def process_file(hocrfile, outfile, classifier, two_pass=True):
-    # Step 1: find candidates for each page (with coords)
+def process_file(hocrfile, outfile, identifier, classifier, two_pass=True,
+                 density_threshold_1=0.3, density_threshold_2=0.3,
+                 opportunistic_fill=False):
     page_matches, page_non_matches, page_info = find_hocr_matches(hocrfile)
-
-    sequences = greedy_sequence_enumeration(page_matches)
-    if not two_pass:
-        sequences = fill_holes(sequences)
+    sequences = greedy_sequence_enumeration(page_matches, density_threshold=density_threshold_1)
+    sequences = fill_holes(sequences)
     trellis = create_graph(sequences, len(page_matches))
+    #for pageidx, page_state in enumerate(trellis):
+    #    print('Page:', pageidx)
+    #    for state in page_state:
+    #        print('\tState:', state)
+    #        for link in state.links:
+    #            print('\t\tLinks:', link, 'cost:', state.get_cost(link))
     best_path = viterbi_trellis(trellis)
 
     if two_pass:
         candidates = candidates_from_trellis(best_path, trellis)
 
-        lg_classifier, lg_scaler = train_model(candidates, page_non_matches, page_info)
+        lg_classifier, lg_scaler = train_model(candidates, page_non_matches,
+                                               page_info, classifier=classifier)
 
+        # Bind our classifier and page info to the prediction_filter
         fun = lambda page_idx, word: prediction_filter(lg_classifier, lg_scaler,
                                                       page_info, page_idx, word)
         page_matches, _, _ = find_hocr_matches(hocrfile, filterfun=fun)
-        sequences = greedy_sequence_enumeration(page_matches, density_threshold=0.3)
+        sequences = greedy_sequence_enumeration(page_matches, density_threshold=density_threshold_2)
         sequences = fill_holes(sequences)
         trellis = create_graph(sequences, len(page_matches), F=1)
         best_path = viterbi_trellis(trellis)
 
+        # Refine the matches to another set of sequences for confidence purposes
+        refined_candidates = candidates_from_trellis(best_path, trellis)
+        refined_candidates = [[x[1]] if (x is not None and x[1] is not None) else [] for idx, x in enumerate(refined_candidates)]
+
+
+        refined_seq = greedy_sequence_enumeration(refined_candidates, density_threshold=density_threshold_2)
+    else:
+        refined_seq = sequences
+
+
+
     pagenos = candidates_from_trellis(best_path, trellis)
 
-    page_json = create_page_json(pagenos)
+    if opportunistic_fill:
+        pagenos = fill_opportunistic(pagenos)
+
+    doc_conf = get_document_confidence(pagenos, sequences, refined_seq)
+
+    page_json = create_page_json(pagenos, doc_conf, identifier)
     with open(outfile, 'w') as outfile_fp:
         json.dump(page_json, outfile_fp, indent=' ' * 4)
 
@@ -786,8 +937,30 @@ if __name__ == '__main__':
                         type=str, default=None)
     parser.add_argument('-o', '--outfile', help='Filename to write to',
                         type=str, default=None)
+    parser.add_argument('-C', '--classifier', help='Classifier for second pass.  Pick either \'naivebayes\' or \'logisticregression\'',
+                        type=str, default='naivebayes')
+    parser.add_argument('--no-two-pass', help='Disable formal analysis pass, '
+                        'not recommended',
+                        default=False, action='store_true')
+    parser.add_argument('--opportunistic-fill', help='Enable opportunistic '
+                        'filling - EXPERIMENTAL, you probably do not want this',
+                        default=False, action='store_true')
+    parser.add_argument('--density-threshold', help='Density threshold when '
+                        'making sequences (between 0 and 1). The lower this is, the more gaps '
+                        ' are allowed. Default is 0.3', type=float, default=0.3)
+    parser.add_argument('--density-threshold-pass-two', help='Density threshold when '
+                        'making sequences (between 0 and 1). The lower this is, the more gaps '
+                        ' are allowed. Default is 0.3', type=float, default=0.3)
+    parser.add_argument('-I', '--identifier', help='Identifier to write to '
+                        'output JSON. (Feel free to ignore)',
+                        type=str, default=None)
     args = parser.parse_args()
 
+    # For reproducability purposes
     random.seed(SEED)
 
-    process_file(args.infile, args.outfile, 'naivebayes')
+    process_file(args.infile, args.outfile, args.identifier,
+                 args.classifier, two_pass=not args.no_two_pass,
+                 density_threshold_1=args.density_threshold,
+                 density_threshold_2=args.density_threshold_pass_two,
+                 opportunistic_fill=args.opportunistic_fill)
