@@ -1,4 +1,1 @@
 lxml==4.6.5
-numpy==1.21.3
-roman==3.3
-scikit-learn==1.2.2

@@ -38,5 +38,6 @@ setup(name='archive-hocr-tools',
       extras_require={
           'epub': ['ebooklib==0.17.1', 'internetarchive-deriver-module==1.0.1', 'iso639==0.1.4'],
           'pdf': ['PyMuPDF==1.19.2', 'numpy==1.21.3'],
+          'pagenumber': ['lxml==4.6.5', 'roman>=3.3', 'numpy>=1.21.3', 'scikit-learn>=1.2.2'],
       },
       package_data={'hocr': ['data/*']})
