@@ -746,7 +746,9 @@ def train_model(candidates, page_non_matches, pages_info, classifier='naivebayes
                 negative_features.append(feature)
 
     if not len(positive_features):
-        raise Exception('Unable to train Logistic Regression Classifier')
+        # This means we didn't find any page numbers at all, so there's no point
+        # to even trying to train a login regression
+        return None, None
 
     total_features = len(positive_features) + len(negative_features)
 
@@ -786,14 +788,14 @@ def get_document_confidence(pagenos, sequences, refined_seq):
     total_pages = len(pagenos)
 
     page_probs = list(map(lambda x: x[1].prob[1], pagenos_found))
-    page_prob_avg = sum(page_probs) / len(page_probs)
+    page_prob_avg = sum(page_probs) / len(page_probs) if len(page_probs) else 0.
 
     page_word_confs = list(map(lambda x: x[1].hocr['confidence'], pagenos_found))
-    page_word_conf_avg = sum(page_word_confs) / len(page_word_confs)
+    page_word_conf_avg = sum(page_word_confs) / len(page_word_confs) if len(page_word_confs) else 0.
 
     page_infer_ratio = len(pagenos_found_plus_synth) / total_pages
     page_found_ratio = len(pagenos_found) / total_pages
-    page_synth_ratio = len(pagenos_found) / len(pagenos_found_plus_synth)
+    page_synth_ratio = len(pagenos_found) / len(pagenos_found_plus_synth) if len(pagenos_found_plus_synth) else 0.
 
 
     confidence = min(1., page_infer_ratio + ALLOW_MISS)
@@ -801,8 +803,8 @@ def get_document_confidence(pagenos, sequences, refined_seq):
     confidence *= min(1., page_synth_ratio + SYNTH_ALLOW)
     confidence *= min(1., page_prob_avg + PAGE_PROB_ADD)
 
-    pages_per_seq = total_pages / len(refined_seq)
-    pages_per_seq_un = total_pages / len(sequences)
+    pages_per_seq = total_pages / len(refined_seq) if len(refined_seq) else 0.
+    pages_per_seq_un = total_pages / len(sequences) if len(sequences) else 0.
 
     confidence *= min(1., pages_per_seq / min(REQ_PAGES_PER_SEQ, total_pages))
     #confidence *= min(1., page_word_conf_avf + PAGE_WORD_CONF_ADD)
@@ -899,24 +901,26 @@ def process_file(hocrfile, outfile, identifier, classifier, two_pass=True,
         lg_classifier, lg_scaler = train_model(candidates, page_non_matches,
                                                page_info, classifier=classifier)
 
-        # Bind our classifier and page info to the prediction_filter
-        fun = lambda page_idx, word: prediction_filter(lg_classifier, lg_scaler,
-                                                      page_info, page_idx, word)
-        page_matches, _, _ = find_hocr_matches(hocrfile, filterfun=fun)
-        sequences = greedy_sequence_enumeration(page_matches, density_threshold=density_threshold_2)
-        sequences = fill_holes(sequences)
-        trellis = create_graph(sequences, len(page_matches), F=1)
-        best_path = viterbi_trellis(trellis)
+        if lg_classifier is None:
+            refined_seq = sequences
+        else:
+            # Bind our classifier and page info to the prediction_filter
+            fun = lambda page_idx, word: prediction_filter(lg_classifier, lg_scaler,
+                                                          page_info, page_idx, word)
+            page_matches, _, _ = find_hocr_matches(hocrfile, filterfun=fun)
+            sequences = greedy_sequence_enumeration(page_matches, density_threshold=density_threshold_2)
+            sequences = fill_holes(sequences)
+            trellis = create_graph(sequences, len(page_matches), F=1)
+            best_path = viterbi_trellis(trellis)
 
-        # Refine the matches to another set of sequences for confidence purposes
-        refined_candidates = candidates_from_trellis(best_path, trellis)
-        refined_candidates = [[x[1]] if (x is not None and x[1] is not None) else [] for idx, x in enumerate(refined_candidates)]
+            # Refine the matches to another set of sequences for confidence purposes
+            refined_candidates = candidates_from_trellis(best_path, trellis)
+            refined_candidates = [[x[1]] if (x is not None and x[1] is not None) else [] for idx, x in enumerate(refined_candidates)]
 
 
-        refined_seq = greedy_sequence_enumeration(refined_candidates, density_threshold=density_threshold_2)
+            refined_seq = greedy_sequence_enumeration(refined_candidates, density_threshold=density_threshold_2)
     else:
         refined_seq = sequences
-
 
 
     pagenos = candidates_from_trellis(best_path, trellis)
