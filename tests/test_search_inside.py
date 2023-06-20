@@ -1,12 +1,13 @@
 import pytest
-from subprocess import check_output
+from subprocess import check_output, check_call
 from os.path import dirname, join
 
 import json
 
 @pytest.mark.usefixtures('sim_hocr_file')
 
-def test_all(sim_hocr_file):
+
+def test_search_inside(sim_hocr_file):
     sim_hocr_file = str(sim_hocr_file)
     basedir = dirname(sim_hocr_file)
 
@@ -40,6 +41,6 @@ def test_all(sim_hocr_file):
         d = json.loads(line)
         data.append(d)
 
-    known_data = json.load(open('tests/hocr_res.json', 'r+'))
+    known_data = json.load(open('test-files/hocr_search_sim_english_fts.json', 'r+'))
 
     assert data == known_data

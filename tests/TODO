@@ -1,0 +1,8 @@
+Add way more tests:
+
+* bin/hocr-extract-page,
+* bin/hocr-fold-chars,
+* bin/hocr-flatten-pages,
+* bin/hocr-confidence-filter,
+* bin/hocr-split-pages)
+* Specific FTS test cases
