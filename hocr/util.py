@@ -1,11 +1,31 @@
 import gzip
 import io
 
-from lxml import etree
+from xml.etree import ElementTree
 
 #: Contains the HOCR schema
 HOCR_SCHEMA = '{http://www.w3.org/1999/xhtml}'
 
+def register_and_nuke_xhtml_namespace():
+    # Nuke the namespace, otherwise it will prefix everything with html:
+    ElementTree.register_namespace('', 'http://www.w3.org/1999/xhtml')
+
+
+def iterparse_tags(fp, tag=None, events=None):
+    doc = ElementTree.iterparse(fp, events=events)
+    for act, elem in doc:
+        if tag is not None and elem.tag not in tag:
+            continue
+
+        yield act, elem
+
+
+def elem_tostring(elem, xml_declaration=None, short_empty_elements=False):
+    s = ElementTree.tostring(elem, method='xml',
+                             encoding='UTF-8',
+                             short_empty_elements=short_empty_elements,
+                             xml_declaration=xml_declaration)
+    return s
 
 def open_if_required(fd_or_path):
     """
@@ -43,7 +63,7 @@ def get_ocr_system(fd):
     bio.write(header + footer)
     bio.seek(0)
 
-    parse = etree.iterparse(bio, tag=(HOCR_SCHEMA+'meta',), events=('end',))
+    parse = iterparse_tags(bio, tag=(HOCR_SCHEMA+'meta',), events=('end',))
     for (start_end, element) in parse:
         if element.attrib.get('name') == 'ocr-system':
             return element.attrib.get('content')
@@ -64,8 +84,8 @@ def get_header_footer(fd):
     * Tuple (header, footer)
     """
     s = ''
-    tags = (HOCR_SCHEMA+'html', HOCR_SCHEMA+'head')
-    doc = etree.iterparse(fd, tag=tags, events=('start', 'end'))
+    tags = (HOCR_SCHEMA + 'html', HOCR_SCHEMA + 'head')
+    doc = iterparse_tags(fd, tag=tags, events=('start', 'end'))
     html_elem = None
     head_elem = None
 
@@ -83,17 +103,16 @@ def get_header_footer(fd):
 
         if elem.tag[-4:] == 'head' and act == 'end':
             head_elem = elem
-            body_elem = etree.Element('body')
+            body_elem = ElementTree.Element('body')
 
-            html_elem.append(head_elem)
             html_elem.append(body_elem)
 
-            s = etree.tostring(html_elem, pretty_print=True, method='xml',
-                               encoding='UTF-8', xml_declaration=True)
+            s = elem_tostring(html_elem, xml_declaration=True,
+                              short_empty_elements=True)
             s = s.decode('utf-8')
             break
 
-    comp = s.split('<body>')
+    comp = s.split('<body />')
 
     # XML-ho
     header = comp[0] + '<body>' + '\n'
@@ -102,7 +121,12 @@ def get_header_footer(fd):
     "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">'''
     header = header[:htmlidx] + doctype + '\n' + header[htmlidx:]
 
-    footer = comp[1].lstrip()
+    # Compatibility with previous lxml code - also Tesseract seems inconsistent
+    # in this regard
+    if '<title />' in header:
+        header = header.replace('<title />', '<title></title>')
+
+    footer = '</body>' + comp[1].lstrip()
 
     return header.encode('utf-8'), footer.encode('utf-8')
 

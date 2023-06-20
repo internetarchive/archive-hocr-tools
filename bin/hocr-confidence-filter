@@ -5,11 +5,9 @@ import argparse
 import re
 from glob import glob
 
-from lxml import etree
-
 from hocr.parse import hocr_page_iterator, hocr_page_get_scan_res, \
         X_WCONF_REGEX, X_FSIZE_REGEX
-from hocr.util import get_header_footer
+from hocr.util import get_header_footer, elem_tostring, register_and_nuke_xhtml_namespace
 
 
 
@@ -147,8 +145,7 @@ def process_files(files_to_process, avg_line_thres, single_word_thres,
 
             page_no += 1
 
-            s = etree.tostring(page, pretty_print=True, method='xml',
-                               encoding='utf-8').decode('utf-8')
+            s = elem_tostring(page).decode('utf-8')
             # Let's Remove the xmlns in the div.
             # Yes, this is horrible, but cleanup_namespaces doesn't help
             # since as far as tostring knows, this is the root.
@@ -223,6 +220,7 @@ if __name__ == '__main__':
 
     files_to_process = sorted(files_to_process)
 
+    register_and_nuke_xhtml_namespace()
     process_files(files_to_process, args.line_confidence,
                   args.single_word_confidence, args.single_char_confidence,
                   args.average_character_confidence_threshold,

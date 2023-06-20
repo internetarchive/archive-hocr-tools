@@ -3,11 +3,11 @@
 import sys
 import argparse
 
-from lxml import etree
+from xml.etree import ElementTree
 
 from xml.sax.saxutils import escape as xmlescape
 
-from hocr.util import open_if_required
+from hocr.util import open_if_required, iterparse_tags, register_and_nuke_xhtml_namespace, elem_tostring
 
 import numpy as np
 
@@ -149,7 +149,7 @@ def abbyy_get_metadata(file_path):
     tags = ('{%s}document' % FINEREADER_6_SCHEMA,
             '{%s}document' % FINEREADER_11_SCHEMA)
 
-    doc = etree.iterparse(fp, tag=tags,
+    doc = iterparse_tags(fp, tag=tags,
                           events=('start',))
     for act, elem in doc:
         if elem.tag[-8:] == 'document':
@@ -174,11 +174,11 @@ def abbyy_page_iterator(file_path, schema):
                        fly)
 
     Returns:
-    Iterator returning a etree.Element of the page.
+    Iterator returning a ElementTree.Element of the page.
     """
     fp = open_if_required(file_path)
 
-    doc = etree.iterparse(fp, tag='{' + schema +'}page')
+    doc = iterparse_tags(fp, tag='{' + schema +'}page')
     for act, elem in doc:
         if elem.tag[-4:] == 'page':
             page = elem
@@ -194,17 +194,17 @@ def abbyy_process_text_block(pageno, NS, block, parent_block, dpi):
     Args:
     * pageno (int): page number, zero indexed
     * NS (str): namespace of this XML as returned by abbyy_get_metadata
-    * block (etree.Element): Abbyy XML block to process
-    * parent_block (etree.Element): parent (target) element to add elements to.
+    * block (ElementTree.Element): Abbyy XML block to process
+    * parent_block (ElementTree.Element): parent (target) element to add elements to.
     * dpi (int): DPI/PPI of the page
     """
     # TODO: check writing direction correctness (do we want it per paragraph,
     # too?) - and then only report on the different writing directions per word
     # (if they are different from paragraph)
 
-    for par in block.xpath('./x:text/x:par', namespaces={'x': NS}):
+    for par in block.findall('./x:text/x:par', namespaces={'x': NS}):
         par_has_text = False
-        parelem = etree.Element('p', attrib={'class': 'ocr_par'})
+        parelem = ElementTree.Element('p', attrib={'class': 'ocr_par'})
 
         parelem.attrib['id'] = get_id(pageno, 'par')
 
@@ -213,8 +213,8 @@ def abbyy_process_text_block(pageno, NS, block, parent_block, dpi):
         rightm = None
         bottomm = None
 
-        for line in par.xpath('./x:line', namespaces={'x': NS}):
-            children = line.getchildren()
+        for line in par.findall('./x:line', namespaces={'x': NS}):
+            children = list(line)
 
             if len(children) < 1:
                 # If the line has no children, it does not have a formatting
@@ -239,7 +239,7 @@ def abbyy_process_text_block(pageno, NS, block, parent_block, dpi):
                 rightm = max(right, rightm)
                 bottomm = max(bottom, bottomm)
 
-            lineelem = etree.Element('span', attrib={'class': 'ocr_line'})
+            lineelem = ElementTree.Element('span', attrib={'class': 'ocr_line'})
 
             if 'lang' in formatting.attrib and formatting.attrib['lang'] != '':
                 mapped_lang = LANG_DATA.get(formatting.attrib['lang'], None)
@@ -316,7 +316,7 @@ def abbyy_page_to_hocr_page(abbyy_page, schema, pageno=None):
     dpi = int(abbyy_page.attrib['resolution'])
     kv['scan_res'] = '%d %d' % (dpi, dpi)
 
-    pageelem = etree.Element('div', attrib={'class': 'ocr_page',
+    pageelem = ElementTree.Element('div', attrib={'class': 'ocr_page',
         'id': page_id(pageno),
         'title': assemble_hocr_title_element(kv),
         })
@@ -332,13 +332,13 @@ def abbyy_page_to_hocr_page(abbyy_page, schema, pageno=None):
     # <xs:enumeration value="Checkmark"/>
     # <xs:enumeration value="GroupCheckmark"/>
     # Let's skip Separator etc atm
-    for block in abbyy_page.xpath('./x:block',
+    for block in abbyy_page.findall('./x:block',
                                   namespaces={'x': NS}):
         if block.attrib['blockType'] == 'Picture':
             # TODO: Can a Picture contain multiple <region>s?
             # Use ocr_photo, since ocr_image suggests the image is probably
             # better expressed in vector graphics, and we don't know.
-            blockelem = etree.Element('div', attrib={'class': 'ocr_photo'})
+            blockelem = ElementTree.Element('div', attrib={'class': 'ocr_photo'})
             kv = {}
             kv['bbox'] = kv['bbox'] = [block.attrib['l'], block.attrib['t'], block.attrib['r'], block.attrib['b']]
             blockelem.attrib['title'] = assemble_hocr_title_element(kv)
@@ -349,31 +349,31 @@ def abbyy_page_to_hocr_page(abbyy_page, schema, pageno=None):
             #       <table class="ocr_table"> ... </table>
             #       or
             #       <span class="ocr_table"><table> ... </table></table>
-            tableelem = etree.Element('table', attrib={'class': 'ocr_table'})
-            #tableelem = etree.Element('div', attrib={'class': 'ocr_table'})
+            tableelem = ElementTree.Element('table', attrib={'class': 'ocr_table'})
+            #tableelem = ElementTree.Element('div', attrib={'class': 'ocr_table'})
             kv = {}
             kv['bbox'] = [block.attrib['l'], block.attrib['t'], block.attrib['r'], block.attrib['b']]
             tableelem.attrib['title'] = assemble_hocr_title_element(kv)
             tableelem.attrib['id'] = get_id(pageno, 'table')
 
-            for row in block.xpath('./x:row', namespaces={'x': NS}):
-                rowelem = etree.Element('tr')
-                for cell in row.xpath('./x:cell', namespaces={'x': NS}):
-                    cellelem = etree.Element('td')
+            for row in block.findall('./x:row', namespaces={'x': NS}):
+                rowelem = ElementTree.Element('tr')
+                for cell in row.findall('./x:cell', namespaces={'x': NS}):
+                    cellelem = ElementTree.Element('td')
                     abbyy_process_text_block(pageno, NS, cell, cellelem, dpi)
                     rowelem.append(cellelem)
 
                 tableelem.append(rowelem)
             pageelem.append(tableelem)
         elif block.attrib['blockType'] == 'Separator':
-            separatorelem = etree.Element('div', attrib={'class': 'ocr_separator'})
+            separatorelem = ElementTree.Element('div', attrib={'class': 'ocr_separator'})
             kv = {}
             kv['bbox'] = [block.attrib['l'], block.attrib['t'], block.attrib['r'], block.attrib['b']]
             separatorelem.attrib['title'] = assemble_hocr_title_element(kv)
             separatorelem.attrib['id'] = get_id(pageno, 'separator')
             pageelem.append(separatorelem)
         elif block.attrib['blockType'] == 'SeparatorsBox':
-            separatorelem = etree.Element('div', attrib={'class': 'ocr_separator'})
+            separatorelem = ElementTree.Element('div', attrib={'class': 'ocr_separator'})
             kv = {}
             kv['bbox'] = [block.attrib['l'], block.attrib['t'], block.attrib['r'], block.attrib['b']]
             separatorelem.attrib['title'] = assemble_hocr_title_element(kv)
@@ -382,7 +382,7 @@ def abbyy_page_to_hocr_page(abbyy_page, schema, pageno=None):
         elif block.attrib['blockType'] == 'Text':
             kv = {}
             kv['bbox'] = [block.attrib['l'], block.attrib['t'], block.attrib['r'], block.attrib['b']]
-            blockelem = etree.Element('div', attrib={'class': 'ocr_carea'})
+            blockelem = ElementTree.Element('div', attrib={'class': 'ocr_carea'})
             blockelem.attrib['title'] = assemble_hocr_title_element(kv)
             blockelem.attrib['id'] = get_id(pageno, 'block')
 
@@ -510,17 +510,17 @@ def abbyy_process_characters(pageno, NS, line, lineelem, formatting, line_fontsi
 
     * pageno (int): Page number, zero indexed
     * NS (str): namespace of this XML as returned by abbyy_get_metadata
-    * line (etree.Element): line element to process
-    * lineelem (etree.Element): target element
-    * formatting (etree.Element): <formatting> element of the line
+    * line (ElementTree.Element): line element to process
+    * lineelem (ElementTree.Element): target element
+    * formatting (ElementTree.Element): <formatting> element of the line
     * line_fontsize (int): font size of the line
 
     Returns:
 
-    Tuple of the last word element (etree.Element) and a list of all the
+    Tuple of the last word element (ElementTree.Element) and a list of all the
     bounding boxes of the characters encountered.
     """
-    wordelem = etree.Element('span', attrib={'class': 'ocrx_word'})
+    wordelem = ElementTree.Element('span', attrib={'class': 'ocrx_word'})
     charelem = None
     first_word = True
     word_start = True
@@ -530,7 +530,7 @@ def abbyy_process_characters(pageno, NS, line, lineelem, formatting, line_fontsi
     wordchar_confs = []
     wordchar_suspicious = []
     all_wordchar_bboxes = []
-    for char in line.xpath('./x:formatting/x:charParams', namespaces={'x': NS}):
+    for char in line.findall('./x:formatting/x:charParams', namespaces={'x': NS}):
         # Abbyy sometimes has charParams without a character, let's just ignore
         # those all together (and hope they don't mess up our
         # wordFirst/wordStart etc detection)
@@ -555,7 +555,7 @@ def abbyy_process_characters(pageno, NS, line, lineelem, formatting, line_fontsi
                             wordchar_confs, wordchar_suspicious, word_dict,
                             formatting, line_fontsize)
 
-                wordelem = etree.Element('span',
+                wordelem = ElementTree.Element('span',
                                          attrib={'class': 'ocrx_word'})
 
             word_start = True
@@ -573,7 +573,7 @@ def abbyy_process_characters(pageno, NS, line, lineelem, formatting, line_fontsi
             else:
                 wordelem.attrib['dir'] = 'rtl'
 
-        charelem = etree.Element('span', attrib={'class': 'ocrx_cinfo'})
+        charelem = ElementTree.Element('span', attrib={'class': 'ocrx_cinfo'})
         charelem.text = char.text
 
         if 'charConfidence' in char.attrib:
@@ -666,8 +666,8 @@ def process_files(filename):
     it = abbyy_page_iterator(filename, schema)
     for idx, p in enumerate(it):
         hocr_page = abbyy_page_to_hocr_page(p, schema, pageno=idx)
-        s = etree.tostring(hocr_page, pretty_print=True, method='xml',
-                           encoding='utf-8').decode('utf-8')
+        ElementTree.indent(hocr_page, space=' ' * 2)
+        s = elem_tostring(hocr_page, short_empty_elements=True).decode('utf-8')
         print(s)
     print('''  </body>
 </html>
@@ -682,4 +682,5 @@ if __name__ == '__main__':
     args = parser.parse_args()
     load_langs()
 
+    register_and_nuke_xhtml_namespace()
     process_files(args.infile)

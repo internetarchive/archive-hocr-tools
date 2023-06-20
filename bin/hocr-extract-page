@@ -3,11 +3,9 @@
 import sys
 import argparse
 
-from lxml import etree
-
 from hocr.searching import hocr_load_lookup_table, hocr_lookup_page_by_dat
 from hocr.parse import hocr_page_iterator
-from hocr.util import open_if_required, get_header_footer
+from hocr.util import open_if_required, get_header_footer, elem_tostring, register_and_nuke_xhtml_namespace
 
 def process_file(filepath, pageno, tablepath):
     fd = open_if_required(filepath)
@@ -26,8 +24,7 @@ def process_file(filepath, pageno, tablepath):
             if idx == pageno:
                 break
 
-    s = etree.tostring(page, pretty_print=True, method='xml',
-                       encoding='utf-8').decode('utf-8')
+    s = elem_tostring(page).decode('utf-8')
 
     s = ' ' + s.replace(' xmlns="http://www.w3.org/1999/xhtml"', '')
     s = s.encode('utf-8')
@@ -46,5 +43,6 @@ if __name__ == '__main__':
                         type=int, default=None)
     args = parser.parse_args()
 
+    register_and_nuke_xhtml_namespace()
     process_file(args.infile, args.page, args.table)
 

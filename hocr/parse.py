@@ -1,9 +1,7 @@
 import gzip
 import re
 
-from lxml import etree
-
-from .util import open_if_required, HOCR_SCHEMA
+from .util import open_if_required, iterparse_tags, HOCR_SCHEMA
 
 
 WRITING_DIRECTION_UNSPECIFIED = 0
@@ -34,18 +32,17 @@ def hocr_page_iterator(fd_or_path):
 
     Returns:
 
-    * Iterator returning a etree.Element hOCR page.
+    * Iterator returning a ElementTree.Element hOCR page.
     """
     fp = open_if_required(fd_or_path)
 
     # Seek to start
     fp.seek(0)
 
-    # TODO: Add gzip loading, specify what file_like should be (I suggest just
-    # file descriptor or just path)
-    doc = etree.iterparse(fp, tag=(HOCR_SCHEMA + 'div', 'div'))
+    tags = {HOCR_SCHEMA + 'div', 'div'}
+    doc = iterparse_tags(fp, tag=tags)
     for act, elem in doc:
-        if elem.tag[-3:] == 'div' and elem.attrib['class'] == 'ocr_page':
+        if elem.attrib['class'] == 'ocr_page':
             page = elem
             yield page
 
@@ -130,7 +127,7 @@ def hocr_page_to_word_data(hocr_page, scaler=1):
     """
     paragraphs = []
 
-    for par in hocr_page.xpath('.//*[@class="ocrx_block" or @class="ocr_par"]'):
+    for par in hocr_page.findall('.//*[@class="ocrx_block" or @class="ocr_par"]'):
         paragraph_data = {'lines': []}
 
         paragraph_writing_direction = WRITING_DIRECTION_UNSPECIFIED
@@ -155,10 +152,10 @@ def hocr_page_to_word_data(hocr_page, scaler=1):
             line_data['baseline'] = baseline
 
             word_data = []
-            for word in line.xpath('.//*[@class="ocrx_word"]'):
+            for word in line.findall('.//*[@class="ocrx_word"]'):
                 rawtext = ''
                 wordbased = True
-                for char in word.xpath('.//*[@class="ocrx_cinfo"]'):
+                for char in word.findall('.//*[@class="ocrx_cinfo"]'):
                     rawtext += char.text
                     wordbased = False
 
@@ -230,7 +227,7 @@ def hocr_page_to_photo_data(hocr_page, minimum_page_area_pct=10):
 
     # Get the actual boxes from the page
     photo_boxes = []
-    for photo in hocr_page.xpath('.//*[@class="ocr_photo"]'):
+    for photo in hocr_page.findall('.//*[@class="ocr_photo"]'):
         box = BBOX_REGEX.search(photo.attrib['title']).group(1).split()
         box = [float(i) for i in box]
         photo_boxes.append(box)
@@ -317,7 +314,7 @@ def hocr_page_to_word_data_fast(hocr_page):
 
     has_ocrx_cinfo = 0
 
-    for par in hocr_page.xpath('.//*[@class="ocrx_block" or @class="ocr_par"]'):
+    for par in hocr_page.findall('.//*[@class="ocr_par"]') + hocr_page.findall('.//*[@class="ocrx_block"]'):
         paragraph_data = {'lines': []}
 
         # We assume that the direct children are all the lines
@@ -325,7 +322,7 @@ def hocr_page_to_word_data_fast(hocr_page):
             line_data = {}
 
             word_data = []
-            for word in line.xpath('.//*[@class="ocrx_word"]'):
+            for word in line.findall('.//*[@class="ocrx_word"]'):
                 title = word.attrib['title']
 
                 box, conf = get_title_attrs(title)
@@ -333,7 +330,7 @@ def hocr_page_to_word_data_fast(hocr_page):
                 rawtext = ''
                 wordbased = True
                 if has_ocrx_cinfo < 2:
-                    for char in word.xpath('.//*[@class="ocrx_cinfo"]'):
+                    for char in word.findall('.//*[@class="ocrx_cinfo"]'):
                         rawtext += char.text
                         wordbased = False
                         has_ocrx_cinfo = 1
