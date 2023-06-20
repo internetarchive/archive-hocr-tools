@@ -78,24 +78,14 @@ from roman import fromRoman, toRoman, InvalidRomanNumeralError
 import hocr
 from hocr.parse import hocr_page_iterator, hocr_page_to_word_data, hocr_page_get_dimensions
 
-# TODO Code:
+# TODO:
 #
-# - Clean up code
+# - Add regression tests with various oddball cases (Roman numerals, etc)
 # - Add confidence for synthetic pages too
-# - Add code documentation
 # - Add ASCII number scheme?
 #
-# TODO not code:
-# - Test with items in pagenumber-test-data - also the oddball ones (maybe add
-#   new schemes for them, like 'arabic +' - to allow (8) as 8, etc)
-# - Compare with ILL
-
-#
-# TO HANDLE:
-# * Handle 22/314, 23/315, ... 71/363
-#
-# To consider:
-# * Add different length (density_threshold) and F parameters for roman and composite sequences?
+# How to handle these?:
+# * 22/314, 23/315, ... 71/363
 
 
 SKIP_NO_EDGE = True
