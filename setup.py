@@ -34,7 +34,7 @@ setup(name='archive-hocr-tools',
       ],
       python_requires='>=3.6',
       include_package_data=True,
-      install_requires=['lxml==4.6.5'],
+      install_requires=[],
       extras_require={
           'epub': ['ebooklib==0.17.1', 'internetarchive-deriver-module==1.0.1', 'iso639==0.1.4'],
           'pdf': ['PyMuPDF==1.19.2', 'numpy==1.21.3'],

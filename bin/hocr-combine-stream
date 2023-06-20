@@ -4,10 +4,12 @@ import sys
 import argparse
 from glob import glob
 
-from lxml import etree
+from xml.etree import ElementTree
+ElementTree.register_namespace('', 'http://www.w3.org/1999/xhtml')
 
 from hocr.parse import hocr_page_iterator
-from hocr.util import get_header_footer
+from hocr.util import register_and_nuke_xhtml_namespace, get_header_footer, \
+        HOCR_SCHEMA, elem_tostring
 
 
 def process_files(files_to_process):
@@ -27,12 +29,12 @@ def process_files(files_to_process):
             line_no = 0
             word_no = 0
 
-            blocks = page.xpath("*[@class='ocr_carea']")
+            blocks = page.findall("*[@class='ocr_carea']")
             for block in blocks:
                 block.attrib['id'] = 'block_%.06d_%.06d' % (page_no,
                                                             block_no)
 
-                paragraphs = block.xpath("*[@class='ocr_par']")
+                paragraphs = block.findall("*[@class='ocr_par']")
                 for par in paragraphs:
                     par.attrib['id'] = 'par_%.06d_%.06d' % (page_no,
                                                             par_no)
@@ -41,7 +43,7 @@ def process_files(files_to_process):
                         line.attrib['id'] = 'line_%.06d_%.06d' % (page_no,
                                                                   line_no)
 
-                        words = line.xpath("*[@class='ocrx_word']")
+                        words = line.findall("*[@class='ocrx_word']")
                         for word in words:
                             word.attrib['id'] = 'word_%.06d_%.06d' % \
                                     (page_no, word_no)
@@ -56,19 +58,26 @@ def process_files(files_to_process):
 
             page_no += 1
 
-            s = etree.tostring(page, pretty_print=True, method='xml',
-                               encoding='utf-8').decode('utf-8')
+            page.tail = None
+            s = elem_tostring(page).decode('utf-8')
+
             # Let's Remove the xmlns in the div.
-            # Yes, this is horrible, but cleanup_namespaces doesn't help
-            # since as far as tostring knows, this is the root.
+            # Yes, this is ugly, but we used to do it, so let's stay
+            # compatible with the lxml code. Also, I don't know a more clean way
+            # to do this.
             # Let's also add two spaces for indentation for the first
             # page, and one for all the other pages.
+
+            # XXX: Can we remove this attribute perhaps from the ocr_page?
             if page_no == 1:
                 s = '  ' + \
                     s.replace(' xmlns="http://www.w3.org/1999/xhtml"', '')
             else:
                 s = ' ' + \
                     s.replace(' xmlns="http://www.w3.org/1999/xhtml"', '')
+
+            # Start on a new line
+            s += '\n'
 
             s = s.encode('utf-8')
             sys.stdout.buffer.write(s)
@@ -90,4 +99,5 @@ if __name__ == '__main__':
 
     files_to_process = sorted(files_to_process)
 
+    register_and_nuke_xhtml_namespace()
     process_files(files_to_process)

@@ -1,6 +1,6 @@
 import json
 
-from lxml import etree
+from xml.etree import ElementTree
 
 from .util import open_if_required
 from .parse import hocr_page_iterator, hocr_page_to_word_data_fast
@@ -72,7 +72,7 @@ def hocr_lookup_page_by_dat(fp, dat):
 
     fp.seek(xstart)
     xml = fp.read(xend-xstart)
-    root = etree.fromstring(xml)
+    root = ElementTree.fromstring(xml)
     return root
 
 

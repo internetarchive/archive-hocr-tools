@@ -3,10 +3,8 @@
 import sys
 import argparse
 
-from lxml import etree
-
 from hocr.parse import hocr_page_iterator
-from hocr.util import open_if_required, get_header_footer
+from hocr.util import open_if_required, get_header_footer, register_and_nuke_xhtml_namespace
 
 
 def process_files(infile):
@@ -31,8 +29,7 @@ def process_files(infile):
                 word.remove(c)
             word.text = txt
 
-        s = etree.tostring(page, pretty_print=True, method='xml',
-                           encoding='utf-8').decode('utf-8')
+        s = elem_tostring(page).decode('utf-8')
         # Let's Remove the xmlns in the div.
         # Yes, this is horrible, but cleanup_namespaces doesn't help
         # since as far as tostring knows, this is the root.
@@ -57,4 +54,5 @@ if __name__ == '__main__':
                         type=str, default=None)
     args = parser.parse_args()
 
+    register_and_nuke_xhtml_namespace()
     process_files(args.infile)
