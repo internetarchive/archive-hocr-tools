@@ -812,26 +812,11 @@ def create_page_json(pagenos, document_conf, identifier):
             'pages': [],
     }
 
-
-    # TODO: Do something with the length of sequences
-
-
-
-
-    # TODO: Determine general confidence of the files
-    #
-    # I guess we want the general confidence to be a function of:
-    # * # pages we found a number for
-    # * # pages we inferred a number for
-    # * Ratio of pages we found and pages we inferred a number for
-    # * avg confidence of the pages per found a page number for
-    #
-    #
-    #
     # For the per-page confidence, we can use:
     # * the probability
     # * whether is gap-filled and synthetic or not
     # * whether it was synthetic and filled towards the 'edges'
+    # But right now we just use the page probability + 0.1
 
     for (pageidx, pagenoval) in pagenos:
         # TODO: add pagenumber as string, and then also another interpretation
@@ -840,7 +825,7 @@ def create_page_json(pagenos, document_conf, identifier):
                 'leafNum': pageidx,
                 # TODO: How do we define page confidence? Something with
                 # probability, synthetic, and what else?
-                'confidence': min(pagenoval.prob[1] + 0.1, 1.) * 100 if pagenoval and pagenoval.prob is not None else None,
+                'confidence': int(min(pagenoval.prob[1] + 0.1, 1.) * 100) if pagenoval and pagenoval.prob is not None else None,
                 'pageNumber': str(pagenoval.value) if pagenoval else '',
                 'pageProb': int(pagenoval.prob[1] * 100) if pagenoval and pagenoval.prob is not None else None,
                 'wordConf': int(pagenoval.hocr['confidence']) if pagenoval and pagenoval.hocr is not None else None
