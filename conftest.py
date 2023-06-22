@@ -34,3 +34,7 @@ def abbyy_file(tmp_path_factory):
 @pytest.fixture(scope='session')
 def abbyy_to_hocr_file(tmp_path_factory):
     return read_file(tmp_path_factory, 'sim_english-abbyy-to-hocr-result.html')
+
+@pytest.fixture(scope='session')
+def sim_hocr_file_text(tmp_path_factory):
+    return read_file(tmp_path_factory, 'sim_english-illustrated-magazine_1884-12_2_15_chocr.txt')
