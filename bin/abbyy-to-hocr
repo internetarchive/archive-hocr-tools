@@ -666,7 +666,8 @@ def process_files(filename):
     it = abbyy_page_iterator(filename, schema)
     for idx, p in enumerate(it):
         hocr_page = abbyy_page_to_hocr_page(p, schema, pageno=idx)
-        ElementTree.indent(hocr_page, space=' ' * 2)
+        if hasattr(ElementTree, 'indent'):
+            ElementTree.indent(hocr_page, space=' ' * 2)
         s = elem_tostring(hocr_page, short_empty_elements=True).decode('utf-8')
         print(s)
     print('''  </body>

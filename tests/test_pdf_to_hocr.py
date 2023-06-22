@@ -18,6 +18,8 @@ def test_pdf_to_hocr(pdf_file, pdf_metadata_file, pdf_chocr_file):
     pdf_chocr_out = join(basedir, 'pdf-chocr.html')
 
     pdf_chocr = check_output(['pdf-to-hocr', '-J', pdf_metadata_file, '-f', pdf_file])
-    orig_text = open(pdf_chocr_file, 'rb+').read()
+
+    orig_text = check_output(['xmllint', '--format', pdf_chocr_file])
+    pdf_chocr = check_output(['xmllint', '--format', '-'], input=pdf_chocr)
 
     assert pdf_chocr == orig_text

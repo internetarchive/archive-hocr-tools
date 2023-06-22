@@ -17,7 +17,7 @@ def test_pdf_to_hocr(abbyy_file, abbyy_to_hocr_file):
 
     chocr_data = check_output(['abbyy-to-hocr', '-f', abbyy_file])
 
-    with open(abbyy_to_hocr_file, 'rb') as fp:
-        orig_chocr = fp.read()
+    orig_chocr = check_output(['xmllint', '--format', abbyy_to_hocr_file])
+    chocr_data = check_output(['xmllint', '--format', '-'], input=chocr_data)
 
     assert orig_chocr == chocr_data
