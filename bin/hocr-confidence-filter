@@ -66,7 +66,7 @@ def process_files(files_to_process, avg_line_thres, single_word_thres,
                 for par in paragraphs:
                     lines_removed = False
 
-                    for line in par.getchildren():
+                    for line in list(par):
                         words_removed = 0
 
                         words = line.xpath("*[@class='ocrx_word']")
@@ -131,7 +131,7 @@ def process_files(files_to_process, avg_line_thres, single_word_thres,
                                 lines_removed = True
 
                     if lines_removed:
-                        lines = par.getchildren()
+                        lines = list(par)
                         if len(lines) == 0:
                             par.getparent().remove(par)
 

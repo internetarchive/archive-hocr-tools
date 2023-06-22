@@ -24,7 +24,7 @@ def process_files(infile):
             for char in chars:
                 txt += char.text
 
-            ch = word.getchildren()
+            ch = list(word)
             for c in ch:
                 word.remove(c)
             word.text = txt

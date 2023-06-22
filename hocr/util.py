@@ -92,10 +92,10 @@ def get_header_footer(fd):
     for act, elem in doc:
         if elem.tag[-4:] == 'html' and act == 'start':
             html_elem = elem
-            children = html_elem.getchildren()
+            children = list(html_elem)
             for child in children:
                 if child.tag[-4:] == 'body':
-                    chs = child.getchildren()
+                    chs = list(child)
                     for c in chs:
                         child.remove(c)
                     # Remove body, we add an empty one

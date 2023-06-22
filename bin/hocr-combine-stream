@@ -39,7 +39,7 @@ def process_files(files_to_process):
                     par.attrib['id'] = 'par_%.06d_%.06d' % (page_no,
                                                             par_no)
 
-                    for line in par.getchildren():
+                    for line in list(par):
                         line.attrib['id'] = 'line_%.06d_%.06d' % (page_no,
                                                                   line_no)
 

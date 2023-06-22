@@ -127,7 +127,7 @@ def hocr_page_to_word_data(hocr_page, scaler=1):
     """
     paragraphs = []
 
-    for par in hocr_page.findall('.//*[@class="ocrx_block" or @class="ocr_par"]'):
+    for par in hocr_page.findall('.//*[@class="ocrx_block"]') + hocr_page.findall('.//*[@class="ocr_par"]'):
         paragraph_data = {'lines': []}
 
         paragraph_writing_direction = WRITING_DIRECTION_UNSPECIFIED
@@ -135,7 +135,7 @@ def hocr_page_to_word_data(hocr_page, scaler=1):
             paragraph_writing_direction = wdmap[par.attrib['dir']]
 
         # We assume that the direct children are all the lines
-        for line in par.getchildren():
+        for line in list(par):
             line_data = {}
 
             linebox = BBOX_REGEX.search(line.attrib['title']).group(1).split()
@@ -163,7 +163,7 @@ def hocr_page_to_word_data(hocr_page, scaler=1):
                     wword = word
                     # Words may contains additional nodes like <em>
                     while True:
-                        children = wword.getchildren()
+                        children = list(wword)
                         if len(children) == 0:
                             break
 
@@ -318,7 +318,7 @@ def hocr_page_to_word_data_fast(hocr_page):
         paragraph_data = {'lines': []}
 
         # We assume that the direct children are all the lines
-        for line in par.getchildren():
+        for line in list(par):
             line_data = {}
 
             word_data = []
@@ -341,7 +341,7 @@ def hocr_page_to_word_data_fast(hocr_page):
                 if wordbased:
                     # Words may contains additional nodes like <em>
                     while True:
-                        children = word.getchildren()
+                        children = list(word)
                         if len(children) == 0:
                             break
 
