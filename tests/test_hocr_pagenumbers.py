@@ -7,7 +7,7 @@ import json
 @pytest.mark.usefixtures('sim_hocr_file')
 @pytest.mark.usefixtures('sim_english_pagenumber_json_file')
 
-def test_split_combine_plaintext(sim_hocr_file, sim_english_pagenumber_json_file):
+def test_hocr_pagenumbers(sim_hocr_file, sim_english_pagenumber_json_file):
     sim_hocr_file = str(sim_hocr_file)
     basedir = dirname(sim_hocr_file)
 
