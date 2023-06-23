@@ -942,7 +942,7 @@ if __name__ == '__main__':
     parser.add_argument('-o', '--outfile', help='Filename to write to',
                         type=str, default=None)
     parser.add_argument('-C', '--classifier', help='Classifier for second pass.  Pick either \'naivebayes\' or \'logisticregression\'',
-                        type=str, default='naivebayes')
+                        type=str, default='logisticregression')
     parser.add_argument('--no-two-pass', help='Disable formal analysis pass, '
                         'not recommended',
                         default=False, action='store_true')
