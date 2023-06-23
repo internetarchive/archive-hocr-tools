@@ -944,7 +944,7 @@ if __name__ == '__main__':
                         ' are allowed. Default is 0.3', type=float, default=0.3)
     parser.add_argument('--density-threshold-pass-two', help='Density threshold when '
                         'making sequences (between 0 and 1). The lower this is, the more gaps '
-                        ' are allowed. Default is 0.3', type=float, default=0.3)
+                        ' are allowed. Default is 0.05', type=float, default=0.05)
     parser.add_argument('-I', '--identifier', help='Identifier to write to '
                         'output JSON. (Feel free to ignore)',
                         type=str, default=None)
