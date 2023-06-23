@@ -893,6 +893,7 @@ def process_file(hocrfile, outfile, identifier, classifier, two_pass=True,
 
         if lg_classifier is None:
             refined_seq = sequences
+            pagenos = candidates_from_trellis(best_path, trellis)
         else:
             # Bind our classifier and page info to the prediction_filter
             fun = lambda page_idx, word: prediction_filter(lg_classifier, lg_scaler,
@@ -900,20 +901,29 @@ def process_file(hocrfile, outfile, identifier, classifier, two_pass=True,
             page_matches, _, _ = find_hocr_matches(hocrfile, filterfun=fun)
             sequences = greedy_sequence_enumeration(page_matches, density_threshold=density_threshold_2)
             sequences = fill_holes(sequences)
-            trellis = create_graph(sequences, len(page_matches), F=1)
-            best_path = viterbi_trellis(trellis)
+            trellis_2 = create_graph(sequences, len(page_matches), F=1)
+            best_path_2 = viterbi_trellis(trellis_2)
 
-            # Refine the matches to another set of sequences for confidence purposes
-            refined_candidates = candidates_from_trellis(best_path, trellis)
-            refined_candidates = [[x[1]] if (x is not None and x[1] is not None) else [] for idx, x in enumerate(refined_candidates)]
+            pagenos = candidates_from_trellis(best_path_2, trellis_2)
 
+            # Use numbers from phase one if we found nothing - sometimes the
+            # formal model is too strict and throws out legit page numbers. This
+            # is a workaround for that.
+            pagenos_1 = candidates_from_trellis(best_path, trellis)
+            for idx in range(len(pagenos)):
+                if pagenos[idx][1] is None and pagenos[idx][1] is not None:
+                    pagenos[idx] = pagenos_1[idx]
+                    # If we use the numbers from phase one, let's set them
+                    # to synthetic regardless for now.
+                    pagenos[idx][1].synthetic = True
 
+            # For confidence metric we want to know how many are synethetic
+            refined_candidates = [[x[1]] if (x is not None and x[1] is not None) else [] for idx, x in enumerate(pagenos)]
             refined_seq = greedy_sequence_enumeration(refined_candidates, density_threshold=density_threshold_2)
     else:
         refined_seq = sequences
+        pagenos = candidates_from_trellis(best_path, trellis)
 
-
-    pagenos = candidates_from_trellis(best_path, trellis)
 
     if opportunistic_fill:
         pagenos = fill_opportunistic(pagenos)
