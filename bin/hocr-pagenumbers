@@ -911,7 +911,7 @@ def process_file(hocrfile, outfile, identifier, classifier, two_pass=True,
             # is a workaround for that.
             pagenos_1 = candidates_from_trellis(best_path, trellis)
             for idx in range(len(pagenos)):
-                if pagenos[idx][1] is None and pagenos[idx][1] is not None:
+                if pagenos[idx][1] is None and pagenos_1[idx][1] is not None:
                     pagenos[idx] = pagenos_1[idx]
                     # If we use the numbers from phase one, let's set them
                     # to synthetic regardless for now.
