@@ -777,14 +777,48 @@ def train_model(candidates, page_non_matches, pages_info, classifier='naivebayes
     return clf, scaler
 
 
+def calculate_seqoffset(refined_seq):
+    seqoffset = 0
+
+    seq_test_vals = []
+    for seq in refined_seq:
+        if isinstance(seq[0][1].scheme, ArabicNumberingScheme):
+            start = seq[0][1]
+
+            val = start.scheme.numeral_value(start.value)
+            seq_test_vals.append((seq[0][0], val, seq))
+        else:
+            seq_test_vals.append((None, None))
+
+
+    for idx, test_seq in enumerate(seq_test_vals):
+        if test_seq[0] is None:
+            continue
+
+        for seq in seq_test_vals[idx+1:]:
+            if seq[0] is None:
+                continue
+
+            leafdist = seq[0] - test_seq[0]
+            valuedist = seq[1] - test_seq[1]
+
+            if leafdist < 20 and leafdist > 0 and valuedist < 20 and valuedist > 0:
+                diff = leafdist - valuedist
+                if diff > 0 and diff < 5:
+                    seqoffset += 1
+                    break
+
+    return seqoffset
+
+
 def get_document_confidence(pagenos, sequences, refined_seq):
     ALLOW_MISS = 0.2 # 20% of pages without a page number is still ok
     ALLOW_MISS_FOUND = 0.7 # We think we can be happy if 30% of the pages actually exist in OCR
 
     SYNTH_ALLOW = 2/3 # Penalise if 33% or less pages are not 'real'
     PAGE_PROB_ADD = 0.1
-    REQ_PAGES_PER_SEQ = 50
-    #PAGE_WORD_CONF_ADD = 0.25 # This is tricky because Abbyy finds very
+    REQ_PAGES_PER_SEQ = 30
+    PAGES_PER_SEQ_LENIENCY = 0.05
 
     pagenos_found_plus_synth = list(filter(lambda x: x[1] is not None, pagenos))
     pagenos_found = list(filter(lambda x: x[1] is not None and not x[1].synthetic, pagenos))
@@ -806,11 +840,10 @@ def get_document_confidence(pagenos, sequences, refined_seq):
     confidence *= min(1., page_synth_ratio + SYNTH_ALLOW)
     confidence *= min(1., page_prob_avg + PAGE_PROB_ADD)
 
-    pages_per_seq = total_pages / len(refined_seq) if len(refined_seq) else 0.
-    pages_per_seq_un = total_pages / len(sequences) if len(sequences) else 0.
+    seqoffset = calculate_seqoffset(refined_seq)
 
-    confidence *= min(1., pages_per_seq / min(REQ_PAGES_PER_SEQ, total_pages))
-    #confidence *= min(1., page_word_conf_avf + PAGE_WORD_CONF_ADD)
+    pages_per_seq = total_pages / (len(refined_seq) - seqoffset) if len(refined_seq) else 0.
+    confidence *= min(1., pages_per_seq / min(REQ_PAGES_PER_SEQ, total_pages) + PAGES_PER_SEQ_LENIENCY)
 
     return confidence
 
@@ -857,14 +890,9 @@ def prediction_filter(lg_classifier, lg_scaler, page_info, page_idx, word_hocr):
     npf = lg_scaler.transform(npf)
     # We maybe don't need to predict twice here, we could perhaps just
     # interpret p ourselves
-    #v = lg_classifier.predict(npf)
     p = lg_classifier.predict_proba(npf)
 
-    #v = v[0]
     p = p[0]
-
-    # XXX: It's not clear if this is how it works (!!!)
-    #      Needs a lot of testing
     v = p[1] > 0.5
 
     return v, p
@@ -906,18 +934,6 @@ def process_file(hocrfile, outfile, identifier, classifier, two_pass=True,
 
             pagenos = candidates_from_trellis(best_path_2, trellis_2)
 
-            # Use numbers from phase one if we found nothing - sometimes the
-            # formal model is too strict and throws out legit page numbers. This
-            # is a workaround for that.
-            pagenos_1 = candidates_from_trellis(best_path, trellis)
-            for idx in range(len(pagenos)):
-                if pagenos[idx][1] is None and pagenos_1[idx][1] is not None:
-                    pagenos[idx] = pagenos_1[idx]
-                    # If we use the numbers from phase one, let's set them
-                    # to synthetic regardless for now.
-                    pagenos[idx][1].synthetic = True
-
-            # For confidence metric we want to know how many are synethetic
             refined_candidates = [[x[1]] if (x is not None and x[1] is not None) else [] for idx, x in enumerate(pagenos)]
             refined_seq = greedy_sequence_enumeration(refined_candidates, density_threshold=density_threshold_2)
     else:
