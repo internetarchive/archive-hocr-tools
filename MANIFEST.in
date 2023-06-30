@@ -1,0 +1,3 @@
+include hocr/*
+exclude test-files/*
+exclude tests/*
