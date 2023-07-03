@@ -18,6 +18,9 @@ get the text coordinates of the matches.
 """
 
 
+FINAL_PRE_TAG = '{{{'
+FINAL_POST_TAG = '}}}'
+
 def match_words(hocr_words, match_indexes):
     def m(match, word_start, word_end):
         # XXX: We might need to turn some of these <= into < or so, there could
@@ -80,7 +83,7 @@ def match_words(hocr_words, match_indexes):
     return matching_words
 
 
-def find_word_boxes(solr_line, hocr_text, hocr_par, page, page_no):
+def find_word_boxes(solr_line, hocr_text, hocr_par, page, page_no, pre_tag, post_tag):
     match_number = 0
     match_with = solr_line
     cur = {
@@ -96,13 +99,13 @@ def find_word_boxes(solr_line, hocr_text, hocr_par, page, page_no):
     # Match solr_line words to hocr_par words
     sub_idx = 0
     while True:
-        s = solr_line[sub_idx:].find('{{{')
+        s = solr_line[sub_idx:].find(pre_tag)
         if s == -1:
             break
-        rs = s + sub_idx + 3
+        rs = s + sub_idx + len(pre_tag)
 
         sub_idx += s
-        e = solr_line[sub_idx:].find('}}}')
+        e = solr_line[sub_idx:].find(post_tag)
         if e == -1:
             break
         re = e + sub_idx
@@ -110,14 +113,15 @@ def find_word_boxes(solr_line, hocr_text, hocr_par, page, page_no):
 
         match_indexes.append((rs, re))
 
-    # Normalise indices for string without {{{ and }}}, this makes life easier
+    # Normalise indices for string without pre_tag and post_tag, this makes life easier
     # later on
     for idx in range(len(match_indexes)):
         rs, re = match_indexes[idx]
-        match_indexes[idx] = (rs - 6 * (idx) - 3, re - 6 * (idx) - 3)
+        match_indexes[idx] = (rs - (len(pre_tag) + len(post_tag)) * (idx) - len(pre_tag),
+                              re - (len(pre_tag) + len(post_tag)) * (idx) - len(post_tag))
 
     if not len(match_indexes):
-        if solr_line.find('}}}') < solr_line.find('{{{'):
+        if solr_line.find(post_tag) < solr_line.find(pre_tag):
             # XXX: Known bug, this happens because elastic currently matches
             # across paragraph boundaries, which we do not support. We could
             # extend our match to support multi-paragraph matching, but we're
@@ -183,11 +187,18 @@ def find_word_boxes(solr_line, hocr_text, hocr_par, page, page_no):
 
     cur['par'].append(r)
 
+    # Whatever the tag was, substitute it back for {{{ and }}}
+    if pre_tag != FINAL_POST_TAG:
+        cur['text'] = cur['text'].replace(pre_tag, FINAL_PRE_TAG)
+    if post_tag != FINAL_PRE_TAG:
+        cur['text'] = cur['text'].replace(post_tag, FINAL_POST_TAG)
+
     results.append(cur)
     return results
 
 
-def find_matches(lookup_table, hocrfp, text, es_whitespace_fixup_required=False):
+def find_matches(lookup_table, hocrfp, text, es_whitespace_fixup_required=False,
+                 pre_tag='{{{', post_tag='}}}'):
     text_byte_count = 0
     current_dat = None
     page_number = 0
@@ -218,9 +229,9 @@ def find_matches(lookup_table, hocrfp, text, es_whitespace_fixup_required=False)
 
     # For every line in the highlighted text, let's find matches...
     for line in text[:-1].split('\n'):
-        # Line should contain both '{{{' and '}}}'
-        contains_left_match = '{{{' in line
-        contains_right_match = '}}}' in line
+        # Line should contain both pre_tag and post_tag
+        contains_left_match = pre_tag in line
+        contains_right_match = post_tag in line
 
         contains_match = contains_left_match and contains_right_match
 
@@ -268,11 +279,12 @@ def find_matches(lookup_table, hocrfp, text, es_whitespace_fixup_required=False)
 
             # TODO: We might want to remove this in the future, it's wasteful
             # to do the replace again.
-            if paragraph_txt != line.replace('{{{', '').replace('}}}', ''):
+            if paragraph_txt != line.replace(pre_tag, '').replace(post_tag, ''):
                 raise Exception('Reconstructed text does not match')
 
             word_results = find_word_boxes(line, paragraph_txt,
-                                           paragraph_words, page, page_number)
+                                           paragraph_words, page, page_number,
+                                           pre_tag, post_tag)
 
             # We currently (rarely) allow word_results to be empty.
             # This happens for example in a paragraph like this:
@@ -287,9 +299,9 @@ def find_matches(lookup_table, hocrfp, text, es_whitespace_fixup_required=False)
         # in the FTS text
         subtract = 0
         if contains_left_match:
-            subtract += line.count('{{{') * 3
+            subtract += line.count(pre_tag) * len(pre_tag)
         if contains_right_match:
-            subtract += line.count('}}}') * 3
+            subtract += line.count(post_tag) * len(post_tag)
 
         # Add counted bytes, plus one for the newline
         text_byte_count += len(line) - subtract + 1
