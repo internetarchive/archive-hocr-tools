@@ -78,6 +78,11 @@ from roman import fromRoman, toRoman, InvalidRomanNumeralError
 import hocr
 from hocr.parse import hocr_page_iterator, hocr_page_to_word_data, hocr_page_get_dimensions
 
+try:
+    from derivermodule.scandata import scandata_parse, scandata_get_skip_pages
+except ImportError:
+    scandata_parse = None
+
 # TODO:
 #
 # - Add regression tests with various oddball cases (Roman numerals, etc)
@@ -383,7 +388,7 @@ def create_candidate_features(page_dim, page_contents_box, hocr_word, pageidx):
 
 # TODO: Make saving non_matches optional, maybe dependent on filterfun being
 # None, or add some pass-1, pass-2 type thing
-def find_hocr_matches(hocrfile, filterfun=None):
+def find_hocr_matches(hocrfile, scandata_skip_pages, filterfun=None):
     page_matches = []
     page_non_matches = []
     page_info = []
@@ -391,7 +396,11 @@ def find_hocr_matches(hocrfile, filterfun=None):
     composite_schemes = []
 
     page_stop = 10000
+
     for pageidx, page in enumerate(hocr_page_iterator(hocrfile)):
+        if scandata_skip_pages is not None and pageidx in scandata_skip_pages:
+            continue
+
         # TODO: Make this filter a toggle?
         page_width, page_height = hocr_page_get_dimensions(page)
         w_20 = page_width // 5
@@ -581,12 +590,6 @@ class State(object):
 
     def __repr__(self):
         return '(%s, %s)' % (self.pageidx, self.value)
-
-        #s = '%s -> [' % self.value
-        #vals = list(map(lambda x: str(x.value) if x.value else 'None', self.links))
-        #s += ','.join(vals)
-        #s += ']'
-        #return s
 
 
 def create_graph(sequences, page_count, F=3):
@@ -848,7 +851,7 @@ def get_document_confidence(pagenos, sequences, refined_seq):
     return confidence
 
 
-def create_page_json(pagenos, document_conf, identifier):
+def create_page_json(pagenos, document_conf, identifier, scandata):
     data = {
              # To differentiate from output made from a different program
             'identifier': identifier,
@@ -858,19 +861,29 @@ def create_page_json(pagenos, document_conf, identifier):
             'pages': [],
     }
 
+    # # Build leafnum mapping if scandata exists
+    if scandata:
+        leafnum_map = []
+        cnt = 0
+
+        for spage in scandata['book']['pageData']['page']:
+            if spage['addToAccessFormats'] == 'false':
+                continue
+
+            leafnum_map.append(int(spage['@leafNum']))
+    else:
+        leafnum_map = list(range(len(pagenos)))
+
     # For the per-page confidence, we can use:
     # * the probability
     # * whether is gap-filled and synthetic or not
     # * whether it was synthetic and filled towards the 'edges'
     # But right now we just use the page probability + 0.1
-
     for (pageidx, pagenoval) in pagenos:
-        # TODO: add pagenumber as string, and then also another interpretation
-        # in case it is a composite page number?
+        leafnum = leafnum_map[pageidx]
+
         page_json_data = {
-                'leafNum': pageidx,
-                # TODO: How do we define page confidence? Something with
-                # probability, synthetic, and what else?
+                'leafNum': leafnum,
                 'confidence': int(min(pagenoval.prob[1] + 0.1, 1.) * 100) if pagenoval and pagenoval.prob is not None else None,
                 'pageNumber': str(pagenoval.value) if pagenoval else '',
                 'pageProb': int(pagenoval.prob[1] * 100) if pagenoval and pagenoval.prob is not None else None,
@@ -888,8 +901,6 @@ def prediction_filter(lg_classifier, lg_scaler, page_info, page_idx, word_hocr):
                                         word_hocr, page_idx)
     npf = np.array(feature).reshape((1, NUM_FEATURES))
     npf = lg_scaler.transform(npf)
-    # We maybe don't need to predict twice here, we could perhaps just
-    # interpret p ourselves
     p = lg_classifier.predict_proba(npf)
 
     p = p[0]
@@ -898,19 +909,27 @@ def prediction_filter(lg_classifier, lg_scaler, page_info, page_idx, word_hocr):
     return v, p
 
 
-def process_file(hocrfile, outfile, identifier, classifier, two_pass=True,
-                 density_threshold_1=0.3, density_threshold_2=0.3,
+# TODO: Code to take the output from create_graph and plot it
+# TODO: Make this a visual graph?
+#for pageidx, page_state in enumerate(trellis):
+#    print('Page:', pageidx)
+#    for state in page_state:
+#        print('\tState:', state)
+#        for link in state.links:
+#            print('\t\tLinks:', link, 'cost:', state.get_cost(link))
+
+def process_file(hocrfile, outfile, identifier, classifier, scandata_file=None,
+                 two_pass=True, density_threshold_1=0.3, density_threshold_2=0.3,
                  opportunistic_fill=False):
-    page_matches, page_non_matches, page_info = find_hocr_matches(hocrfile)
+    scandata = scandata_parse(scandata_file) if scandata_file is not None else None
+    scandata_skip_pages = scandata_get_skip_pages(scandata) if scandata is not None else []
+
+
+    page_matches, page_non_matches, page_info = find_hocr_matches(hocrfile,
+                                                                  scandata_skip_pages)
     sequences = greedy_sequence_enumeration(page_matches, density_threshold=density_threshold_1)
     sequences = fill_holes(sequences)
     trellis = create_graph(sequences, len(page_matches))
-    #for pageidx, page_state in enumerate(trellis):
-    #    print('Page:', pageidx)
-    #    for state in page_state:
-    #        print('\tState:', state)
-    #        for link in state.links:
-    #            print('\t\tLinks:', link, 'cost:', state.get_cost(link))
     best_path = viterbi_trellis(trellis)
 
     if two_pass:
@@ -926,7 +945,7 @@ def process_file(hocrfile, outfile, identifier, classifier, two_pass=True,
             # Bind our classifier and page info to the prediction_filter
             fun = lambda page_idx, word: prediction_filter(lg_classifier, lg_scaler,
                                                           page_info, page_idx, word)
-            page_matches, _, _ = find_hocr_matches(hocrfile, filterfun=fun)
+            page_matches, _, _ = find_hocr_matches(hocrfile, scandata_skip_pages, filterfun=fun)
             sequences = greedy_sequence_enumeration(page_matches, density_threshold=density_threshold_2)
             sequences = fill_holes(sequences)
             trellis_2 = create_graph(sequences, len(page_matches), F=1)
@@ -946,7 +965,7 @@ def process_file(hocrfile, outfile, identifier, classifier, two_pass=True,
 
     doc_conf = get_document_confidence(pagenos, sequences, refined_seq)
 
-    page_json = create_page_json(pagenos, doc_conf, identifier)
+    page_json = create_page_json(pagenos, doc_conf, identifier, scandata)
     with open(outfile, 'w') as outfile_fp:
         json.dump(page_json, outfile_fp, indent=' ' * 4)
 
@@ -954,6 +973,8 @@ def process_file(hocrfile, outfile, identifier, classifier, two_pass=True,
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='hOCR to plaintext')
     parser.add_argument('-f', '--infile', help='Filename to read',
+                        type=str, default=None)
+    parser.add_argument('-S', '--scandata', help='Scandata filename to read, optional',
                         type=str, default=None)
     parser.add_argument('-o', '--outfile', help='Filename to write to',
                         type=str, default=None)
@@ -976,11 +997,16 @@ if __name__ == '__main__':
                         type=str, default=None)
     args = parser.parse_args()
 
+    if args.scandata is not None and scandata_parse is None:
+        raise Exception('To parse scandata, please install the'
+                        '\'internetarchive-deriver-module\' package')
+
     # For reproducability purposes
     random.seed(SEED)
 
     process_file(args.infile, args.outfile, args.identifier,
-                 args.classifier, two_pass=not args.no_two_pass,
+                 args.classifier, scandata_file=args.scandata,
+                 two_pass=not args.no_two_pass,
                  density_threshold_1=args.density_threshold,
                  density_threshold_2=args.density_threshold_pass_two,
                  opportunistic_fill=args.opportunistic_fill)
