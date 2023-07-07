@@ -109,7 +109,8 @@ COMPOSITE_DIGIT_RE = re.compile('\d+')
 COMPOSITE_SIMPLE_RES = [re.compile('^\(\d+\)$'),
                         re.compile('^[A-Z]+-?\d+$'), re.compile('^\d+-?[A-Z]+$'),
                         re.compile('^\(\d+\)\(\d+\)$'), re.compile('^\(\d+\)\d+$'),
-                        re.compile('^\d+/\d+$'), re.compile('^\d+\.\d+$')]
+                        re.compile('^\d+/\d+$'), re.compile('^\d+\.\d+$'),
+                        re.compile('^\d+\-\d+$')]
 
 TRELLIS_NONE_COST = 2. # To 'None' nodes
 
