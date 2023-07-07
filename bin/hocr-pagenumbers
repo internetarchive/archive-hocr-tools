@@ -217,7 +217,7 @@ class CompositeNumberingScheme(object):
     """
 
     # Base-N for the composite numbering
-    MUL = 10000
+    MUL = 1000000000000
 
     def __init__(self, val):
         self.orig_val = val
