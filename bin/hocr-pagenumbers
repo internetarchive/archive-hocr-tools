@@ -866,7 +866,13 @@ def create_page_json(pagenos, document_conf, identifier, scandata):
         leafnum_map = []
         cnt = 0
 
-        for spage in scandata['book']['pageData']['page']:
+        # xmltodict will make a single page in pageData not a list, so let's
+        # make it one
+        page_data = scandata['book']['pageData']['page']
+        if not isinstance(page_data, list):
+            page_data = [page_data]
+
+        for spage in page_data:
             if spage['addToAccessFormats'] == 'false':
                 continue
 
