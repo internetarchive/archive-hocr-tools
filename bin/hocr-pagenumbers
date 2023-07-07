@@ -395,10 +395,10 @@ def find_hocr_matches(hocrfile, scandata_skip_pages, filterfun=None):
 
     composite_schemes = []
 
-    page_stop = 10000
-
+    idx_subtractor = 0
     for pageidx, page in enumerate(hocr_page_iterator(hocrfile)):
         if scandata_skip_pages is not None and pageidx in scandata_skip_pages:
+            idx_subtractor += 1
             continue
 
         # TODO: Make this filter a toggle?
@@ -443,7 +443,7 @@ def find_hocr_matches(hocrfile, scandata_skip_pages, filterfun=None):
                             if not fact:
                                 continue
 
-                        v, p = filterfun(pageidx, word)
+                        v, p = filterfun(pageidx - idx_subtractor, word)
                         if not v:
                             continue
 
@@ -489,9 +489,6 @@ def find_hocr_matches(hocrfile, scandata_skip_pages, filterfun=None):
         page_non_matches.append(non_matches)
 
         page_info.append(([page_width, page_height], page_content_box))
-
-        if pageidx > page_stop:
-            break
 
     return page_matches, page_non_matches, page_info
 
