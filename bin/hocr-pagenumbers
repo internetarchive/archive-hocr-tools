@@ -424,7 +424,9 @@ def find_hocr_matches(hocrfile, scandata_skip_pages, filterfun=None):
                     page_content_box[2] = max(page_content_box[2], x2)
                     page_content_box[3] = max(page_content_box[3], y2)
 
-                    if SKIP_NO_EDGE:
+                    # We allow for some samples to pass through to ensure that
+                    # we will (likely) have some negative matches
+                    if len(non_matches) > NEGATIVES_PER_PAGE and SKIP_NO_EDGE:
                         if not (x1 < w_20 or y1 < h_20 or x2 > w_80 or y2 > h_80):
                             continue
 
