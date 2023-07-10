@@ -749,7 +749,7 @@ def train_model(candidates, page_non_matches, pages_info, classifier='naivebayes
                                                     non_match, page_idx)
                 negative_features.append(feature)
 
-    if not len(positive_features):
+    if not len(positive_features) or not len(negative_features):
         # This means we didn't find any page numbers at all, so there's no point
         # to even trying to train a login regression
         return None, None
@@ -825,7 +825,7 @@ def get_document_confidence(pagenos, sequences, refined_seq):
     pagenos_found = list(filter(lambda x: x[1] is not None and not x[1].synthetic, pagenos))
     total_pages = len(pagenos)
 
-    page_probs = list(map(lambda x: x[1].prob[1], pagenos_found))
+    page_probs = list(map(lambda x: x[1].prob is not None and x[1].prob[1], pagenos_found))
     page_prob_avg = sum(page_probs) / len(page_probs) if len(page_probs) else 0.
 
     page_word_confs = list(map(lambda x: x[1].hocr['confidence'], pagenos_found))
