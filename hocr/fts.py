@@ -83,7 +83,7 @@ def match_words(hocr_words, match_indexes):
     return matching_words
 
 
-def find_word_boxes(solr_line, hocr_text, hocr_par, page, page_no, pre_tag, post_tag):
+def find_word_boxes(solr_line, hocr_text, hocr_par, page, page_no, pre_tag, post_tag, replace_with_final_tags=False):
     match_number = 0
     match_with = solr_line
     cur = {
@@ -187,18 +187,20 @@ def find_word_boxes(solr_line, hocr_text, hocr_par, page, page_no, pre_tag, post
 
     cur['par'].append(r)
 
-    # Whatever the tag was, substitute it back for {{{ and }}}
-    if pre_tag != FINAL_POST_TAG:
-        cur['text'] = cur['text'].replace(pre_tag, FINAL_PRE_TAG)
-    if post_tag != FINAL_PRE_TAG:
-        cur['text'] = cur['text'].replace(post_tag, FINAL_POST_TAG)
+    if replace_with_final_tags:
+        # Whatever the tag was, substitute it back for {{{ and }}}
+        if pre_tag != FINAL_POST_TAG:
+            cur['text'] = cur['text'].replace(pre_tag, FINAL_PRE_TAG)
+        if post_tag != FINAL_PRE_TAG:
+            cur['text'] = cur['text'].replace(post_tag, FINAL_POST_TAG)
 
     results.append(cur)
     return results
 
 
 def find_matches(lookup_table, hocrfp, text, es_whitespace_fixup_required=False,
-                 pre_tag='{{{', post_tag='}}}'):
+                 pre_tag='{{{', post_tag='}}}',
+                 replace_with_final_tags=False):
     text_byte_count = 0
     current_dat = None
     page_number = 0
@@ -284,7 +286,8 @@ def find_matches(lookup_table, hocrfp, text, es_whitespace_fixup_required=False,
 
             word_results = find_word_boxes(line, paragraph_txt,
                                            paragraph_words, page, page_number,
-                                           pre_tag, post_tag)
+                                           pre_tag, post_tag,
+                                           replace_with_final_tags=replace_with_final_tags)
 
             # We currently (rarely) allow word_results to be empty.
             # This happens for example in a paragraph like this:

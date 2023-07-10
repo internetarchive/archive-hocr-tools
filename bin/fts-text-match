@@ -10,7 +10,7 @@ from hocr.util import open_if_required
 from hocr.fts import find_matches
 
 
-def process_file(hocrfile, textfile, tablepath, es_workaround, pre_tag, post_tag):
+def process_file(hocrfile, textfile, tablepath, es_workaround, pre_tag, post_tag, replace_with_final_tags):
     lookup_table = hocr_load_lookup_table(tablepath)
 
     hocrfp = open_if_required(hocrfile)
@@ -19,7 +19,8 @@ def process_file(hocrfile, textfile, tablepath, es_workaround, pre_tag, post_tag
 
     for word_results in find_matches(lookup_table, hocrfp,
                                      text, es_whitespace_fixup_required=es_workaround,
-                                     pre_tag=pre_tag, post_tag=post_tag):
+                                     pre_tag=pre_tag, post_tag=post_tag,
+                                     replace_with_final_tags=replace_with_final_tags):
         json.dump(word_results, sys.stdout)
         sys.stdout.write('\n')
 
@@ -36,10 +37,12 @@ if __name__ == '__main__':
                         type=str, default=None)
     parser.add_argument('--pre-tag', help='Highlighting pretags, normally {{{', type=str, default='{{{')
     parser.add_argument('--post-tag', help='Highlighting posttags, normally }}}', type=str, default='}}}')
+    parser.add_argument('--replace-with-final-tags', help='Replace tags with {{{
+                        and }}}', action='store_true')
     parser.add_argument('--es-workaround', help='Flag to enable working around'
                         'ES stripping leading whitespace',
                         default=False, action='store_true')
     args = parser.parse_args()
 
     process_file(args.hocr, args.annotated_text, args.table, args.es_workaround,
-                 args.pre_tag, args.post_tag)
+                 args.pre_tag, args.post_tag, args.replace_with_final_tags)
