@@ -95,6 +95,7 @@ except ImportError:
 
 SKIP_NO_EDGE = True
 COMPOSITE_LIMIT = 2500
+COMPOSITE_LIMIT_REACHED = False
 
 
 NUM_FEATURES = 40
@@ -468,16 +469,18 @@ def find_hocr_matches(hocrfile, scandata_skip_pages, filterfun=None):
 
                     # If we haven't matched anything, consider a new composite
                     # scheme
-                    fact = composite_factory(text)
-                    if fact:
-                        if len(composite_schemes) > COMPOSITE_LIMIT:
-                            raise ValueError('Reached CompositeNumberingScheme limit of %d' % COMPOSITE_LIMIT)
-
-                        composite_schemes.append(fact)
-                        match = PageNumberCandidate(text, fact, False, word)
-                        match.prob = p
-                        matches.append(match)
-                        continue
+                    if not COMPOSITE_LIMIT_REACHED:
+                        fact = composite_factory(text)
+                        if fact:
+                            if len(composite_schemes) < COMPOSITE_LIMIT:
+                                composite_schemes.append(fact)
+                                match = PageNumberCandidate(text, fact, False, word)
+                                match.prob = p
+                                matches.append(match)
+                                continue
+                            else:
+                                COMPOSITE_LIMIT_REACHED = True
+                                print('Reached CompositeNumberingScheme limit of %d' % COMPOSITE_LIMIT, file=sys.stderr)
 
 
                     # If we get to this point, the word did not match, store it
