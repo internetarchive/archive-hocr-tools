@@ -391,6 +391,7 @@ def create_candidate_features(page_dim, page_contents_box, hocr_word, pageidx):
 # TODO: Make saving non_matches optional, maybe dependent on filterfun being
 # None, or add some pass-1, pass-2 type thing
 def find_hocr_matches(hocrfile, scandata_skip_pages, filterfun=None):
+    global COMPOSITE_LIMIT_REACHED
     page_matches = []
     page_non_matches = []
     page_info = []
