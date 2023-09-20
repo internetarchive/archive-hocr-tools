@@ -116,7 +116,7 @@ def process_files(files_to_process, avg_line_thres, single_word_thres,
                                     or (c < char_conf_multiplier_thres) \
                                     or (word_unrealistically_big and wconf < 85) \
                                     or (word_unrealistically_big and len(chars) < 3):
-                                        word.getparent().remove(word)
+                                        line.remove(word)
 
                                         words_removed += 1
 
@@ -126,21 +126,21 @@ def process_files(files_to_process, avg_line_thres, single_word_thres,
 
                             # TODO: turn these into parameters too?
                             if (len(words) >= 5 and percremoved > 0.5) or len(curwords) == 0:
-                                line.getparent().remove(line)
+                                par.remove(line)
 
                                 lines_removed = True
 
                     if lines_removed:
                         lines = list(par)
                         if len(lines) == 0:
-                            par.getparent().remove(par)
+                            block.remove(par)
 
                             paragraphs_removed = True
 
                 if paragraphs_removed:
                     paragraphs = block.findall("*[@class='ocr_par']")
                     if len(paragraphs) == 0:
-                        block.getparent().remove(block)
+                        page.remove(block)
 
 
             page_no += 1
