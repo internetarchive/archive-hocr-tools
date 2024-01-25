@@ -5,9 +5,11 @@ from os.path import dirname, join
 import json
 
 @pytest.mark.usefixtures('sim_hocr_file')
+@pytest.mark.usefixtures('sim_hocr_lookup_file')
+@pytest.mark.usefixtures('sim_hocr_searchtext_file')
 
 
-def test_search_inside(sim_hocr_file):
+def test_search_inside(sim_hocr_file, sim_hocr_lookup_file, sim_hocr_searchtext_file):
     sim_hocr_file = str(sim_hocr_file)
     basedir = dirname(sim_hocr_file)
 
@@ -19,9 +21,13 @@ def test_search_inside(sim_hocr_file):
     with open(lookup_table_file, 'wb+') as f:
         f.write(lookup_table)
 
+    assert open(str(sim_hocr_lookup_file), 'rb').read() == lookup_table
+
     plaintext = check_output(['hocr-text', '-f', sim_hocr_file])
     with open(sim_plaintext_file, 'wb+') as f:
         f.write(plaintext)
+
+    assert open(str(sim_hocr_searchtext_file), 'rb').read() == plaintext
 
     plaintext_hl = check_output(['fts-text-annotate', '-f',
                                  sim_plaintext_file, '-p', 'English'])

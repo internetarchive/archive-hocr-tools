@@ -12,6 +12,14 @@ def sim_hocr_file(tmp_path_factory):
     return read_file(tmp_path_factory, 'sim_english-illustrated-magazine_1884-12_2_15_chocr.html.gz')
 
 @pytest.fixture(scope='session')
+def sim_hocr_lookup_file(tmp_path_factory):
+    return read_file(tmp_path_factory, 'sim_english-illustrated-magazine_1884-12_2_15_hocr_pageindex.json')
+
+@pytest.fixture(scope='session')
+def sim_hocr_searchtext_file(tmp_path_factory):
+    return read_file(tmp_path_factory, 'sim_english-illustrated-magazine_1884-12_2_15_hocr_searchtext.txt')
+
+@pytest.fixture(scope='session')
 def pdf_file(tmp_path_factory):
     return read_file(tmp_path_factory, 'test_arlington_heights_daily_herald-19760903.pdf')
 
