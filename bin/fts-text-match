@@ -37,8 +37,7 @@ if __name__ == '__main__':
                         type=str, default=None)
     parser.add_argument('--pre-tag', help='Highlighting pretags, normally {{{', type=str, default='{{{')
     parser.add_argument('--post-tag', help='Highlighting posttags, normally }}}', type=str, default='}}}')
-    parser.add_argument('--replace-with-final-tags', help='Replace tags with {{{
-                        and }}}', action='store_true')
+    parser.add_argument('--replace-with-final-tags', help='Replace tags with {{{ and }}}', action='store_true')
     parser.add_argument('--es-workaround', help='Flag to enable working around'
                         'ES stripping leading whitespace',
                         default=False, action='store_true')
