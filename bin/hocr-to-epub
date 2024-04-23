@@ -274,6 +274,12 @@ class EpubGenerator(object):
             self.scandata    = scandata_parse(self.scandata_xml_file_path)
             self.skip_pages  = scandata_get_skip_pages(self.scandata)
             self.cover_pages = scandata_get_pagetype_pages(self.scandata, 'Cover')
+
+            # Ignore cover pages that are detected as cloth covers
+            sd_pages = self.scandata['book']['pageData']['page']
+            if not isinstance(sd_pages, list):
+                sd_pages = [sd_pages]
+            self.cover_pages = list(filter(lambda idx: sd_pages[idx].get('clothCover', None) != 'true', self.cover_pages))
         else:
             self.skip_pages = []
             self.cover_pages = []
