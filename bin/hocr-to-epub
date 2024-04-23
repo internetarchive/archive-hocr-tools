@@ -637,7 +637,10 @@ class EpubGenerator(object):
         #book.toc = pages_epub
         self.book.add_item(epub.EpubNcx())
         self.book.add_item(epub.EpubNav())
-        self.book.spine = ['cover', 'nav', ] + pages_epub
+        if len(self.cover_pages):
+            self.book.spine = ['cover', 'nav', ] + pages_epub
+        else:
+            self.book.spine = ['nav', ] + pages_epub
         epub.write_epub(self.epub_zip_file_path, self.book, {})
 
 
