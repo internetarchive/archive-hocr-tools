@@ -1,0 +1,20 @@
+<?xml version='1.0' encoding='utf-8'?>
+<!DOCTYPE dtbook PUBLIC "-//NISO//DTD dtbook 2005-1//EN" "http://www.daisy.org/z3986/2005/dtbook-2005-1.dtd" >
+<!-- <?xml-stylesheet href="dtbook.2005.basic.css" type="text/css"?> -->
+<dtbook xmlns="http://www.daisy.org/z3986/2005/dtbook/" version="2005-1" xml:lang="en">
+	<head>
+		<meta content="Protected book" name="dc:Title" />
+		<meta content="Produced by the Internet Archive" name="dc:Creator" />
+		<meta content="Internet Archive" name="dc:Publisher" />
+		<meta content="en" name="dc:Language" />
+		<meta content="2010-04-28" name="dc:Date" />
+		<meta content="archive_daisy_facade" name="dtb:uid" />
+	</head>
+	<book>
+		<frontmatter>
+			<level1>
+				<h1 id="ops1">The content of this book is protected.  To read this book, you must use a device that has the appropriate key installed.</h1>
+			</level1>
+		</frontmatter>
+	</book>
+</dtbook>

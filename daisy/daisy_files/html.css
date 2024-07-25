@@ -1,0 +1,643 @@
+/* ------------------------------------------------------------ */
+/* dtbook.2005.basic.css
+
+   Created  10-13-1999 by M. Moodie from M. Hakkinen's template
+   Modified 03-16-2000 and 09/06-2000 by M. Brown
+   Modified 12-12-2002 by Guillaume du Bourguet (BrailleNet)
+   M Gylling 2003-11-04: additions, merging and fixing of
+                         Dtbvisv3.css,
+                         dtbook-std.css,
+                         dtbbase.css, into
+                         dtbook.basic.css
+   version (2004-08-28, m gylling):
+		     --> dtbook.2004.basic.css <--
+   Changelist:
+   Added support for: 	bridgehead
+     			hd
+  			poem
+  			linegroup
+			dateline
+			byline
+			epigraph
+			covertitle
+
+   version (2005-01-18, m gylling and brandon nelson)
+   		--> dtbook.2005.basic.css <--
+		Changelist latest version:
+			Misc updates for Z39.86.2005 version of dtbook
+
+   version (2006-08-18, b nelson)
+   		Changelist:
+   			Fixed inline pagenums
+
+   version (2006-09-28, m gylling)
+   		Changelist:
+   			Fixed new http reference in this comment
+
+   This CSS is supported and maintained by the Z39.86 committee.
+   You may modify and redistribute it, but please consider
+   donating enhancements back to the source.
+
+   Contact:
+       markus.gylling@tpb.se
+       z3986@mail.daisy.org
+   WWW: http://www.daisy.org/z3986/2005/
+
+   Note: if you want to apply local/specific rules,
+   the best way to do that is to associate another
+   stylesheet with the dtbook document via an
+   additional xml-stylesheet link.
+
+   In that additional stylesheet you can override
+   rules in or add rules to this stylesheet.
+
+   If the proximity rule works to your disadvantage,
+   use the !important syntax to force things to order.          */
+/* ------------------------------------------------------------ */
+
+/* The following strings are searchable
+   to go directly to subsection:
+
+  elements without display properties
+  base properties of whole doc
+  frontmatter
+  bodymatter
+  rearmatter
+  headings
+  pagenum, linenum
+  general block
+  general inlines
+  list.ul,list.ol
+  tables
+  images
+
+*/
+
+
+/* ------------------------------------------------------------- */
+/*             elements without display properties               */
+/* ------------------------------------------------------------- */
+/* changed from dtbook to html */
+html {
+  display:block;
+  width: 100%;
+}
+
+head, head * {
+  display: none
+}
+
+
+
+/* ------------------------------------------------------------- */
+/*                  base properties of whole doc                 */
+/* ------------------------------------------------------------- */
+/* Change from book to body */
+body {
+  display: block;
+  background-color: rgb(255,255,255);
+  color: rgb(0,0,0);
+  font-family: arial, verdana, sans-serif;
+  line-height: 1.5em;
+  margin-top: 4em;
+  margin-bottom: 2em;
+  margin-left: 6em;
+  margin-right: 6em;
+}
+
+/* ------------------------------------------------------------- */
+/*                          frontmatter                          */
+/* ------------------------------------------------------------- */
+
+/* make this into a class */
+.frontmatter {
+  display: block;
+  margin-top: 1em;
+  margin-bottom: 1em;
+}
+
+/* make these into classes */
+
+.doctitle, .docauthor, .covertitle {
+  display: block;
+  font-weight: bold;
+  text-align: center;
+}
+
+.doctitle {
+  font-size: 2.0em;
+}
+
+.covertitle {
+  font-size: 1.5em;
+}
+
+.docauthor {
+  font-style: italic;
+  font-size: 1.5em;
+}
+
+
+
+/* ------------------------------------------------------------- */
+/*                          bodymatter                           */
+/* ------------------------------------------------------------- */
+
+/* make this a class */
+.bodymatter {
+  display: block;
+  margin-top: 1em;
+  margin-bottom: 1em;
+}
+
+
+/* ------------------------------------------------------------- */
+/*                          rearmatter                           */
+/* ------------------------------------------------------------- */
+
+/* make this into a class */
+.rearmatter {
+  display: block;
+  margin-top: 1em;
+  margin-bottom: 1em;
+}
+
+/* ------------------------------------------------------------- */
+/*                          headings                             */
+/* ------------------------------------------------------------- */
+/* bridgehead and hd become classes */
+h1, h2, h3, h4, h5, h6, .bridgehead {
+  display: block;
+  font-weight: bold;
+  margin-bottom: 0.5em;
+}
+/* junk the level hd, level level hd, etc.  */
+h1 {
+  font-size: 1.7em;
+  margin-top: 1.5em
+}
+h2 {
+  font-size: 1.5em;
+  margin-top: 1.2em
+}
+h3  {
+  font-size: 1.4em;
+  margin-top: 1.0em
+}
+h4  {
+  font-size: 1.3em;
+  margin-top: 1.0em
+}
+h5  {
+  font-size: 1.2em;
+  margin-top: 1.0em
+}
+h6  {
+  font-size: 1.0em;
+  margin-top: 1.0em
+}
+/* bridgehead and hd become classes */
+.bridgehead, .hd {
+  font-size: 1.0em;
+  margin-top: 0.8em
+}
+
+/* ------------------------------------------------------------- */
+/*                       pagenum, linenum                        */
+/* ------------------------------------------------------------- */
+
+/* make this into a class
+   junk the distinctions between inline/block displays. with the xsl styling it'll display as a paragraph or span, which will handle it*/
+.pagenum {
+  /*display: inline;*/
+  color: rgb(30,30,30);
+  padding: 0.2em 0.2em 0.2em 1em;
+  border: 1px solid rgb(200,200,250);
+  margin-top: 0.8em;
+  margin-bottom: 0.8em;
+}
+
+/* junk this in favor of above */
+/* level > pagenum, level1 > pagenum, level2 > pagenum, level3 > pagenum, level4 > pagenum, level5 > pagenum, level6 > pagenum {
+  display: block;
+}
+*/
+
+/* class */
+.linenum {
+  display: inline;
+}
+/*TODO can we make this a class? if not can we achieve same affect with xsl? */
+linenum:after {
+  content: " "
+}
+
+/* ------------------------------------------------------------- */
+/*                       general block                           */
+/* ------------------------------------------------------------- */
+
+div {
+  display: block;
+}
+
+p {
+  display: block;
+  margin-top: 0.7em;
+}
+
+/* class */
+.prodnote {
+  display: block;
+  padding: 0.2em;
+  margin: 0.3em;
+  border: 1px solid black;
+}
+
+/* class */
+.sidebar {
+  display: block;
+  padding: 0.5em;
+  margin-top: 1.5em;
+  margin-bottom: 1.5em;
+  border: 1px solid rgb(0,0,0);
+  background-color: rgb(250,250,250);
+}
+
+div .sidebar, .sidebar .sidebar, blockquote .sidebar, dd .sidebar, li .sidebar, th .sidebar, td .sidebar {
+  float: right;
+  width: inherit;
+  clear: both;
+  margin-left: 1em;
+  margin-right: 1em;
+}
+
+address {
+  display: block;
+  margin-top:1em;
+  margin-bottom:1em;
+}
+
+/* class */
+.note {
+  display:block;
+  margin:  1.2em 1em 1.2em 1em;
+  padding: 0.5em 1em 0.5em 1em;
+  border-top: 1px solid black;
+  border-bottom: 1px solid black;
+}
+
+blockquote {
+  display: block;
+  margin-left: 2em;
+  margin-top: 0.6em;
+  margin-bottom: 0.6em;
+}
+
+/* TODO not currently used, should it be applied with a span in xsl to be used? */
+/*line {
+  display: block;
+  margin: 0em;
+}
+*/
+
+/* class */
+.poem {
+  display: block;
+  margin-left: 3em;
+  margin-top: 1em;
+  margin-bottom: 1em;
+}
+
+/* class */
+.linegroup {
+  display: block;
+  margin-top: 0.6em;
+}
+
+/* classes */
+.dateline, .byline {
+  display: block;
+}
+
+/* class */
+.epigraph {
+  display: block;
+  margin-top: 2em;
+  margin-bottom: 2em;
+  margin-left: 3em;
+  font-style: italic;
+}
+
+/* ------------------------------------------------------------- */
+/*                      general inlines                          */
+/* ------------------------------------------------------------- */
+
+
+a {
+  display: inline;
+  text-decoration: underline;
+  color: rgb(0,0,255);
+}
+
+bdo {
+  display: inline;
+}
+
+em {
+  display: inline;
+  font-style: italic;
+}
+
+strong {
+  display: inline;
+  font-weight: bold;
+}
+
+kbd {
+  display: inline;
+  font-size: 90%;
+  background: rgb(0,0,0);
+  color: rgb(255,255,255);
+  padding: 0.2em;
+}
+
+span {
+  display: inline;
+}
+
+sub {
+  display: inline;
+  vertical-align : sub;
+  font-size : 90%;
+  padding-left: 0.3em;
+  padding-right: 0.3em;
+}
+
+sup {
+  display: inline;
+  vertical-align : super;
+  font-size : 90%;
+  padding-left: 0.3em;
+  padding-right: 0.3em;
+}
+
+abbr, acronym {
+  display: inline;
+  border-bottom: 1px dotted gray;
+}
+
+dfn {
+  display: inline;
+  border-bottom: 1px dashed black;
+}
+
+code {
+  display: inline;
+  font-family: courier, monospace;
+}
+
+samp {
+  display: inline;
+}
+
+cite {
+  display: inline;
+}
+
+cite .title {
+  display: inline;
+  border-bottom: 1px solid gray
+}
+
+cite .author {
+  display: inline;
+}
+
+br {
+ display:block;
+}
+
+q {
+  display: inline;
+  font-style: italic;
+}
+
+/* classes */
+.noteref, .annoref {
+  display: inline;
+  font-size: 0.7em;
+  vertical-align: super;
+  padding-left: 0.3em;
+  padding-right: 0.3em;
+  border: 1px solid rgb(210,210,210);
+}
+
+/* not currently used
+sent {
+  display:inline;
+  margin:0em;
+}
+
+w {
+  display:inline;
+  margin:0em;
+}
+*/
+
+/* ------------------------------------------------------------- */
+/*                      list.ul,list.ol                          */
+/*                                                               */
+/* <!ELEMENT list                                                */
+/* Contains:                                                     */
+/* (hd | prodnote | li | pagenum)+                               */
+/*                                                               */
+/* type (ol | ul) #IMPLIED                                       */
+/* enum (1 | a | U | i | X) #IMPLIED                             */
+/* ------------------------------------------------------------- */
+
+/* changed references from list[type=ul] to ul tags and list[type=ol] to ol and [enum] to . classes
+NOTE: ol.1 changed to ol.one to validate as CSS2.1 (even though the former seems like it should validate) */
+
+ol, ul {
+  display: block;
+  margin-top: 1em;
+  margin-bottom: 1em;
+  margin-left: 1em;
+}
+
+li {
+ display: list-item;
+ list-style-position: outside;
+}
+
+/* not currently used
+lic {
+  display: inline;
+}
+
+lic + lic {
+	margin-left: 1em;
+}
+*/
+
+ol.one {
+  list-style-type: decimal;
+}
+
+ol.a {
+  list-style-type: lower-alpha;
+}
+
+ol.A {
+  list-style-type: upper-alpha;
+}
+
+ol.i {
+  list-style-type: lower-roman;
+}
+
+ol.I {
+  list-style-type: upper-roman;
+}
+
+ul {
+  list-style-type: disc;
+}
+
+/* preformatted list */
+ul.pl {
+  list-style-type: none;
+}
+
+ul > li > ul {
+  list-style-type: circle;
+}
+
+ul > li > ul > li > ul {
+  list-style-type: square;
+}
+
+/* the ">" and non ">" seem redundant
+list > li > list, list li list { */
+
+ol li ol, ul li ul, ol li ul, ul li ol {
+  margin-top: 0em;
+  margin-bottom: 0em;
+}
+
+/* ------------------------------------------------------------- */
+/*                      definition list                          */
+/* ------------------------------------------------------------- */
+
+dl, dt, dd {
+  display: block;
+}
+
+dt {
+  font-weight: bold;
+  margin-top: 0.4em;
+}
+
+dd {
+  margin-left: 2em;
+}
+
+
+/* ------------------------------------------------------------- */
+/*                          tables                               */
+/* ------------------------------------------------------------- */
+
+
+table {
+  display: table;
+  border-spacing: 0px;
+  border-collapse: collapse;
+  margin-top: 0;
+  margin-bottom: 0;
+  /* -moz-box-sizing: border-box; */
+  text-indent: 0;
+  empty-cells: show;
+}
+
+table > caption {
+  display: table-caption;
+  text-align: center;
+  /* -moz-box-sizing: border-box; */
+}
+
+tr {
+  display: table-row;
+  vertical-align: inherit;
+}
+
+col {
+  display: table-column;
+}
+
+colgroup {
+  display: table-column-group;
+}
+
+tbody {
+  display: table-row-group;
+  vertical-align: middle;
+}
+
+thead {
+  display: table-header-group;
+  vertical-align: middle;
+}
+
+tfoot {
+  display: table-footer-group;
+  vertical-align: middle;
+}
+
+td {
+  display: table-cell;
+  border: 1px solid gray;
+  vertical-align: inherit;
+  text-align: inherit;
+  padding: 0.5em;
+}
+
+th {
+  display: table-cell;
+  border: 1px solid gray;
+  vertical-align: inherit;
+  font-weight: bold;
+  padding: 2px;
+}
+
+
+/* ------------------------------------------------------------- */
+/*                          images                               */
+/* ------------------------------------------------------------- */
+
+/* class */
+.imggroup {
+  display: inline;
+}
+
+.imggroup > .caption {
+  font-size: 80%;
+}
+
+ /* ------------------------------------------------------------- */
+ /*                       span classes                            */
+/* ------------------------------------------------------------- */
+
+/* html classes */
+
+span.underline {
+  text-decoration: underline;
+}
+
+/* single and double strikethrough are the same for lack of a CSS property for double strikethrough */
+span.strikethrough, span.double-strikethrough {
+  text-decoration: line-through;
+}
+
+span.small-caps {
+  font-variant: small-caps;
+}

@@ -1,0 +1,17 @@
+<?xml version='1.0' encoding='utf-8'?>
+<!DOCTYPE smil PUBLIC '-//NISO//DTD dtbsmil 2005-1//EN' 'http://www.daisy.org/z3986/2005/dtbsmil-2005-1.dtd'>
+<smil xmlns="http://www.w3.org/2001/SMIL20/">
+  <head>
+    <meta name="dtb:uid" content="archive_daisy_facade" />
+    <meta name="dtb:generator" content="us_rfbd_TextOnlyCreator, v0.9 (beta)" />
+    <meta name="dtb:totalElapsedTime" content="0:00:00.000" />
+  </head>
+  <body>
+    <seq dur="0:00:00.000" fill="remove" id="mseq">
+      <text id="s1" src="facade.xml#id4smil1" />
+      <text id="s2" src="facade.xml#id4smil2" />
+      <text id="s3" src="facade.xml#id4smil3" />
+      <text id="s4" src="facade.xml#id4smil4" />
+    </seq>
+  </body>
+</smil>

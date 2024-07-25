@@ -1,0 +1,30 @@
+<?xml version='1.0' encoding='utf-8'?>
+<!DOCTYPE package PUBLIC "+//ISBN 0-9673008-1-9//DTD OEB 1.2 Package//EN" "http://openebook.org/dtds/oeb-1.2/oebpkg12.dtd" >
+<package xmlns="http://openebook.org/namespaces/oeb-package/1.0/" unique-identifier="opf_UID">
+<metadata>
+	<dc-metadata xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:oebpackage="http://openebook.org/namespaces/oeb-package/1.0/">
+		<dc:Title>Protected book</dc:Title>
+		<dc:Creator>Produced by the Internet Archive</dc:Creator>
+		<dc:Publisher>Internet Archive</dc:Publisher>
+		<dc:Language>en</dc:Language>
+		<dc:Date>2010-04-28</dc:Date>
+		<dc:Identifier id="opf_UID">archive_daisy_facade</dc:Identifier>
+		<dc:Format>ANSI/NISO Z39.86-2005</dc:Format>
+	</dc-metadata>
+	<x-metadata>
+		<meta name="dtb:multimediaType" content="textNCX" />
+		<meta name="dtb:totalTime" content="0:00:00.000" />
+		<meta name="dtb:multimediaContent" content="text" />
+	</x-metadata>
+</metadata>
+<manifest>
+		<item id="ncx" href="facade.ncx" media-type="application/x-dtbncx+xml" />
+		<item id="opf_2" href="facade.xml" media-type="application/x-dtbook+xml" />
+		<item id="opf_1" href="smilFile1.smil" media-type="application/smil" />
+		<item id="resource" href="toResource.res" media-type="application/x-dtbresource+xml" />
+		<item id="dunsel" href="facade.opf" media-type="text/xml" />
+</manifest>
+<spine>
+		<itemref idref="opf_1" />
+</spine>
+</package>

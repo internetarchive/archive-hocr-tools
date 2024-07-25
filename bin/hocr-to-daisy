@@ -1,0 +1,500 @@
+#!/usr/bin/env python
+
+import argparse
+import os
+import re
+import zipfile
+
+import daisy
+import hocr
+
+from lxml import objectify
+from lxml.objectify import ObjectifiedElement
+
+# TODO: this should go in a utilities file or something.
+rnums = {
+    'i': 1,
+    'ii': 2,
+    'iii': 3,
+    'iv': 4,
+    'v': 5,
+    'vi': 6,
+    'vii': 7,
+    'viii': 8,
+    'ix': 9,
+    'x': 10,
+    'xi': 11,
+    'xii': 12,
+    'xiii': 13,
+    'xiv': 14,
+    'xv': 15,
+    'xvi': 16,
+    'xvii': 17,
+    'xviii': 18,
+    'xix': 19,
+    'xx': 10,
+    'xxi': 21,
+    'xxii': 22,
+    'xxiii': 23,
+    'xxiv': 24,
+    'xxv': 25,
+    'xxvi': 26,
+    'xxvii': 27,
+    'xxviii': 28,
+    'xxix': 29,
+    'xxx': 30,
+    'xxxi': 31,
+    'xxxii': 32,
+    'xxxiii': 33,
+    'xxxiv': 34,
+    'xxxv': 35,
+    'xxxvi': 36,
+    'xxxvii': 37,
+    'xxxviii': 38,
+    'xxxix': 39,
+    'xl': 40,
+    'xli': 41,
+    'xlii': 42,
+    'xliii': 43,
+    'xliv': 44,
+    'xlv': 45,
+    'xlvi': 46,
+    'xlvii': 47,
+    'xlviii': 48,
+    'xlix': 49,
+    'l': 50,
+    'li': 51,
+    'lii': 52,
+    'liii': 53,
+    'liv': 54,
+    'lv': 55,
+    'lvi': 56,
+    'lvii': 57,
+    'lviii': 58,
+    'lix': 59,
+    'lx': 60,
+    'lxi': 61,
+    'lxii': 62,
+    'lxiii': 63,
+    'lxiv': 64,
+    'lxv': 65,
+    'lxvi': 66,
+    'lxvii': 67,
+    'lxviii': 68,
+    'lxix': 69,
+    'lxx': 70,
+    # lxx lccc
+}
+
+
+# TODO: candidate for removal/refactor
+def rnum_to_int(r):
+    r = r.lower()
+    if r in rnums:
+        return rnums[r]
+    return 0
+
+
+class DaisyGenerator:
+    __version__ = '1.0.0'
+
+    # TODO fix pathing and other hard-coded values. Look at ebook script.
+    book_path = "/home/scott/Downloads/daisy/items/poorrichardsalma00franrich"
+    doc = "poorrichardsalma00franrich"
+    book_id = "poorrichardsalma00franrich"
+    toc = None
+    metadata = None
+    scandata = None
+
+    def __init__(self, hocr_xml_file_path: str) -> None:
+        self.hocr_xml_file_path = hocr_xml_file_path
+
+    # TODO: candidate for removal/refactor
+    def get_hocr(self):
+
+        if os.path.exists(self.hocr_xml_file_path):
+            return open(self.hocr_xml_file_path, 'rb')
+        raise FileNotFoundError('No hOCR file found')
+
+    # TODO: candidate for removal/refactor
+    def get_scandata_path(self) -> str:
+        paths = [
+            os.path.join(self.book_path, self.doc + '_scandata.xml'),
+            os.path.join(self.book_path, 'scandata.xml'),
+            os.path.join(self.book_path, 'scandata.zip'),
+        ]
+        for sd_path in paths:
+            if os.path.exists(sd_path):
+                return sd_path
+        raise Exception('No scandata found')
+
+    # TODO: candidate for removal/refactor
+    def get_scandata(self) -> ObjectifiedElement:
+        if self.scandata is None:
+            scandata_path = self.get_scandata_path()
+            (_, ext) = os.path.splitext(scandata_path)
+            if ext.lower() == '.zip':
+                z = zipfile.ZipFile(scandata_path, 'r')
+                scandata_str = z.read('scandata.xml')
+                z.close()
+                self.scandata = objectify.fromstring(scandata_str)
+                self.scandata_pages = self.scandata.pageData.page
+            else:
+                self.scandata = objectify.parse(self.get_scandata_path()).getroot()
+                self.scandata_pages = self.scandata.xpath('/book/pageData/page')
+            self.leaves = {}
+            for page in self.scandata_pages:
+                self.leaves[int(page.get('leafNum'))] = page
+        return self.scandata
+
+    # TODO: candidate for removal/refactor
+    def get_scandata_ns(self) -> str:
+        scandata = self.get_scandata()
+        bookData = scandata.find('bookData')
+        if bookData is None:
+            return '{http://archive.org/scribe/xml}'
+        else:
+            return ''
+
+    # TODO: candidate for removal/refactor
+    def get_bookdata(self) -> ObjectifiedElement:
+        scandata = self.get_scandata()
+        bookdata = scandata.find(self.get_scandata_ns() + 'bookData')
+        if bookdata is None:
+            raise ValueError('why here?')
+            # bookdata = scandata.bookData
+        return bookdata
+
+    # TODO: candidate for removal/refactor
+    def get_metadata(self) -> list[dict[str, str]]:
+        if self.metadata:
+            return self.metadata
+        # metadata is by book_id, not by doc
+        md_path = os.path.join(self.book_path, self.book_id + '_meta.xml')
+        md = objectify.parse(md_path).getroot()
+        result = []
+        for el in md.iterchildren():
+            if el.tag == 'language':
+                # TODO look at how hocr-to-epub handles this.
+                # result_text = iso_639_23_to_iso_639_1(el.text)
+                result_text = el.text
+            else:
+                result_text = el.text
+            result.append({'tag': el.tag, 'text': result_text})
+        self.metadata = result
+        return result
+
+    # TODO: candidate for removal/refactor
+    def get_toc(self) -> None:
+        if self.toc is not None:
+            return self.toc
+        toc_path = os.path.join(self.book_path, self.doc + '_toc.xml')
+        if not os.path.exists(toc_path):
+            return None
+        toc = objectify.parse(toc_path).getroot()
+        result = {}
+        for el in toc.iterchildren():
+            result[el.get('page')] = el.get('title')
+        return result
+
+    # TODO: candidate for removal/refactor
+    def has_pagenos(self) -> bool:
+        self.get_scandata()
+        max_page = len(self.scandata_pages)
+        i = 0
+        result = False
+        while i < max_page:
+            page_scandata = self.get_page_scandata(i)
+            pageno = page_scandata.find(self.get_scandata_ns() + 'pageNumber')
+            if pageno:
+                result = True
+                break
+            i += 1
+        return result
+
+    # TODO: candidate for removal/refactor
+    def get_page_scandata(self, i: int) -> ObjectifiedElement:
+        self.get_scandata()
+        if i >= len(self.scandata_pages):
+            return None
+        return self.scandata_pages[int(i)]
+
+    # TODO: candidate for removal/refactor
+    def get_scandata_pages(self) -> list[ObjectifiedElement]:
+        self.get_scandata()
+        return self.scandata_pages
+
+    # TODO: candidate for removal/refactor
+    def par_is_pageno_header_footer_hocr(self, par) -> bool:
+        if len(par['lines']) != 1:
+            return False
+
+        line = par['lines'][0]
+
+        line_text = hocr.text.hocr_paragraph_text({'lines': [line]})
+        if re.match(
+            r'[\[li] *[0-9afhiklmnouvx^]*[0-9][0-9afhiklmnouvx^]* *[\]ijl1]', line_text
+        ):
+            return True
+        if re.match(r'[\[li] *[xiv]* *[\]ijl1]', line_text):
+            return True
+
+        for word in line['words']:
+            if word['fontsize'] > 40:
+                continue
+            if rnum_to_int(word['text'].lower()) > 0:
+                return True
+            # common OCR errors
+            if re.match('[0-9io]+', word['text']):
+                return True
+            if re.match('[0-9afhiklmnouvx^]*[0-9][0-9afhiklmnouvx^]*', word['text']):
+                return True
+
+        return False
+
+    # TODO: candidate for removal/refactor
+    def our_hocr_paragraph_text(self, paragraph):
+        word_confidences = []
+        par_text = ''
+
+        for line in paragraph['lines']:
+            if par_text[-2:] == '- ':
+                par_text = par_text[:-2]
+
+            line_words = ''
+            for word in line['words']:
+                if word['text'].endswith(' '):
+                    line_words += word['text']
+                else:
+                    line_words += word['text'] + ' '
+
+            # Encode
+            line_words = line_words.encode('utf-8')
+            #line_words = line_words.strip().encode('utf-8')
+
+            # Write out
+            if line_words:
+                par_text += line_words.decode('utf-8')
+
+        if par_text:
+            # Strip last space
+            par_text = par_text[:-1]
+
+        return par_text
+
+
+    # def process_book_hocr(self, iabook: "iarchive.Book", ebook: "daisy.Book", alt_booktext=None):
+    def process_book_hocr(self, ebook: "daisy.book.DaisyBook", alt_booktext=None):
+        # TODO: maybe ultimately just make the initial DaisyBook here?
+        scandata = self.get_scandata()
+        hocr_file = self.get_hocr()
+
+        scandata_ns = self.get_scandata_ns()
+        bookData = self.get_bookdata()
+
+        contents = self.get_toc()
+        metadata = self.get_metadata()
+        title = daisy.book.get_metadata_tag_data(metadata, 'title')
+        if title is None:
+            title = ''
+        author = daisy.book.get_metadata_tag_data(metadata, 'creator')
+        if author is None:
+            author = ''
+
+        ebook.push_tag('frontmatter')
+        ebook.add_tag('doctitle', title)
+        ebook.add_tag('docauthor', author)
+
+        ebook.push_navpoint('level', 'h', 'Producer\'s Note')
+        ebook.push_navpoint('level', 'h', 'About Internet Archive Daisy Books')
+        ebook.add_tag(
+            'p',
+            """This book was produced in DAISY format by the Internet Archive.  The
+        book pages were scanned and converted to DAISY format
+        automatically.  This process relies on optical character
+        recognition, and is somewhat susceptible to errors.  These errors
+        may include weird characters, non-words, and incorrect guesses at
+        structure.  Page numbers and headers or footers may remain from
+        the scanned page.  The Internet Archive is working to improve the
+        scanning process and resulting books, but in the meantime, we hope
+        that this book will be useful to you.
+        """,
+        )
+        ebook.pop_navpoint()
+        ebook.push_navpoint('level', 'h', 'About this DAISY book')
+        has_nav = False
+        if self.has_pagenos():
+            has_nav = True
+            ebook.add_tag('p', "This book has page navigation.")
+        if contents is not None:
+            has_nav = True
+            ebook.add_tag('p', "This book has chapter navigation.")
+        if not has_nav:
+            ebook.add_tag(
+                'p', "This book as paragraph navigation, but is otherwise unstructured."
+            )
+        ebook.pop_navpoint()
+        ebook.push_navpoint('level', 'h', 'About the Internet Archive')
+        ebook.add_tag(
+            'p',
+            """The Internet Archive was founded in 1996
+        to build an Internet library
+    and to promote universal access to all knowledge.  The Archive's purposes
+    include offering permanent access for researchers, historians,
+    scholars, people with disabilities, and the general public to
+    historical collections that exist in digital format.  The Internet Archive
+    includes texts, audio, moving images, and software as well as archived
+    web pages, and provides specialized services for information access
+    for the blind and other persons with disabilities.
+        """,
+        )
+        ebook.pop_navpoint()
+        ebook.pop_navpoint()
+
+        ebook.pop_tag()
+        ebook.push_tag('bodymatter')
+
+        if contents is None:
+            ebook.push_navpoint('level', 'h', 'Book')
+
+        part_number = 0
+        cover_number = 0
+        pushed_navpoint = False
+
+        hocr_iterator = hocr.parse.hocr_page_iterator(hocr_file)
+
+        found_title = False
+        for page_scandata in self.get_scandata_pages():  # confirm title exists
+            t = page_scandata.pageType.text
+            if t == 'Title' or t == 'Title Page':
+                found_title = True
+                break
+        # True if no title found, else False now, True later.
+        before_title_page = found_title
+        for i, page in enumerate(hocr_iterator):
+
+            # wrap in try/finally to ensure page.clear() is called
+            try:
+                if alt_booktext is not None:
+                    ebook.add_tag('p', alt_booktext)
+                    break
+
+                page_scandata = self.get_page_scandata(i)
+                pageno = None
+                if page_scandata is not None:
+                    pageno = page_scandata.find(scandata_ns + 'pageNumber')
+                    if pageno:
+                        pageno = pageno.text
+                if pageno:
+                    if contents is not None and pageno in contents:
+                        if pushed_navpoint:
+                            ebook.pop_navpoint()
+                        ebook.push_navpoint('level', 'h', contents[pageno])
+                        pushed_navpoint = True
+                    part_str = 'part' + str(part_number).zfill(4)
+                    ebook.add_pagetarget(pageno, pageno)
+
+                def include_page(page_scandata):
+                    if page_scandata is None:
+                        return False
+                    add = page_scandata.find(scandata_ns + 'addToAccessFormats')
+                    if add is None:
+                        add = page_scandata.addToAccessFormats
+                    return bool(add is not None and add.text == 'true')
+
+                if not include_page(page_scandata):
+                    continue
+
+                page_type = page_scandata.pageType.text.lower()
+                add_to_access_formats = page_scandata.addToAccessFormats.text.lower()
+                if page_type == 'cover':
+                    pass
+
+                elif page_type == 'title' or page_type == 'title page':
+                    before_title_page = False
+                    pass
+
+                elif page_type == 'copyright':
+                    pass
+
+                elif page_type == 'contents':
+                    pass
+
+                elif page_type == 'normal' or add_to_access_formats == 'true':
+                    # Treat pages with unrecognized pageType and add_to_access_formats=true as Normal
+                    if before_title_page:
+                        # XXX consider skipping if blank + no words?
+                        # make page image
+                        # (id, filename) = make_html_page_image(i, iabook, ebook)
+                        pass
+                    else:
+                        first_par = True
+                        saw_pageno_header_footer = False
+
+                        pars = list(hocr.parse.hocr_page_to_word_data(page))
+
+                        for paridx, par in enumerate(pars):
+                            # First paragraph
+                            if first_par and self.par_is_pageno_header_footer_hocr(par):
+                                saw_pageno_header_footer = True
+                                first_par = False
+                                continue
+                            first_par = False
+
+                            # Last paragraph
+                            if not saw_pageno_header_footer and paridx == len(pars) - 1 and self.par_is_pageno_header_footer_hocr(par):
+                                saw_pageno_header_footer = True
+                                continue
+
+                            par_text = self.our_hocr_paragraph_text(par)
+                            ebook.add_tag('p', par_text)
+            finally:
+                pass
+
+        if pushed_navpoint:
+            ebook.pop_navpoint()
+
+        if contents is None:
+            ebook.pop_navpoint()  # level1
+
+        ebook.pop_tag()
+        ebook.push_tag('rearmatter')
+        ebook.push_tag('level1')
+        ebook.add_tag('p', 'End of book')
+        ebook.pop_tag()
+        ebook.pop_tag()
+
+    def generate(self):
+        """
+        TODO:
+            Maybe this can more or less run process_book_hocr() from www/daisy.
+        """
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description='hOCR to DAISY converter')
+
+    parser.add_argument('-f', '--infile', help='Item _hocr.html file', type=str, default=None)
+    parser.add_argument('-o', '--outfile', help='Output DAISY zip', type=str, default=None)
+    parser.add_argument('-w', '--workingdir', help='Directory used for temp files', type=str, default=None)
+
+    args = parser.parse_args()
+
+    if not args.infile:
+        raise Exception('Must provide hOCR input file with -f')
+
+    # Allow external caller to override working directory from default /tmp/ or /var/tmp/fast/
+    if args.workingdir:
+        WORKING_DIR = args.workingdir
+
+    # The relation of these will need to be rethought.
+    # TODO: should be args.infile
+    dg = DaisyGenerator(hocr_xml_file_path=args.infile)
+    metadata = dg.get_metadata()
+
+    out_name = "test_daisy_output.zip"
+    daisy_book = daisy.book.DaisyBook(out_name=out_name, metadata=metadata)
+    dg.process_book_hocr(ebook=daisy_book)
+    daisy_book.finish(metadata)
+
+
