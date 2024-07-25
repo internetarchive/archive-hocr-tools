@@ -3,13 +3,15 @@
 import argparse
 import os
 import re
+from typing import Final
+import xml.etree.ElementTree as ET
 import zipfile
 
 import daisy
 import hocr
 
-from lxml import objectify
-from lxml.objectify import ObjectifiedElement
+NAMESPACE: Final = '{http://archive.org/scribe/xml}'
+
 
 # TODO: this should go in a utilities file or something.
 rnums = {
@@ -99,15 +101,16 @@ class DaisyGenerator:
     __version__ = '1.0.0'
 
     # TODO fix pathing and other hard-coded values. Look at ebook script.
-    book_path = "/home/scott/Downloads/daisy/items/poorrichardsalma00franrich"
-    doc = "poorrichardsalma00franrich"
-    book_id = "poorrichardsalma00franrich"
     toc = None
     metadata = None
     scandata = None
 
-    def __init__(self, hocr_xml_file_path: str) -> None:
+    def __init__(self, hocr_xml_file_path: str, ia_item_name: str = "", ia_item_path: str = "", ia_doc_name: str = "") -> None:
         self.hocr_xml_file_path = hocr_xml_file_path
+        self.ia_item_name = ia_item_name
+        self.ia_item_path = ia_item_path
+        self.ia_doc_name = ia_doc_name
+
 
     # TODO: candidate for removal/refactor
     def get_hocr(self):
@@ -119,9 +122,9 @@ class DaisyGenerator:
     # TODO: candidate for removal/refactor
     def get_scandata_path(self) -> str:
         paths = [
-            os.path.join(self.book_path, self.doc + '_scandata.xml'),
-            os.path.join(self.book_path, 'scandata.xml'),
-            os.path.join(self.book_path, 'scandata.zip'),
+            os.path.join(self.ia_item_path, self.ia_doc_name + '_scandata.xml'),
+            os.path.join(self.ia_item_path, 'scandata.xml'),
+            os.path.join(self.ia_item_path, 'scandata.zip'),
         ]
         for sd_path in paths:
             if os.path.exists(sd_path):
@@ -129,22 +132,24 @@ class DaisyGenerator:
         raise Exception('No scandata found')
 
     # TODO: candidate for removal/refactor
-    def get_scandata(self) -> ObjectifiedElement:
+
+    def get_scandata(self) -> ET.Element:
         if self.scandata is None:
             scandata_path = self.get_scandata_path()
-            (_, ext) = os.path.splitext(scandata_path)
+            _, ext = os.path.splitext(scandata_path)
             if ext.lower() == '.zip':
-                z = zipfile.ZipFile(scandata_path, 'r')
-                scandata_str = z.read('scandata.xml')
-                z.close()
-                self.scandata = objectify.fromstring(scandata_str)
-                self.scandata_pages = self.scandata.pageData.page
+                with zipfile.ZipFile(scandata_path, 'r') as z:
+                    scandata_str = z.read('scandata.xml')
+                    self.scandata = ET.fromstring(scandata_str)
+                    if pageData := self.scandata.find(f'{NAMESPACE}pageData'):
+                        self.scandata_pages = pageData.findall(f'{NAMESPACE}page')
             else:
-                self.scandata = objectify.parse(self.get_scandata_path()).getroot()
-                self.scandata_pages = self.scandata.xpath('/book/pageData/page')
-            self.leaves = {}
-            for page in self.scandata_pages:
-                self.leaves[int(page.get('leafNum'))] = page
+                # TODO: this branch needs testing
+                # TODO: can test with non-zipped scandata file?
+                self.scandata = ET.parse(scandata_path).getroot()
+                self.scandata_pages = self.scandata.findall(f'{NAMESPACE}/pageData/page')
+
+            self.leaves = {int(page.get('leafNum', 0)): page for page in self.scandata_pages}
         return self.scandata
 
     # TODO: candidate for removal/refactor
@@ -157,7 +162,7 @@ class DaisyGenerator:
             return ''
 
     # TODO: candidate for removal/refactor
-    def get_bookdata(self) -> ObjectifiedElement:
+    def get_bookdata(self) -> ET.Element:
         scandata = self.get_scandata()
         bookdata = scandata.find(self.get_scandata_ns() + 'bookData')
         if bookdata is None:
@@ -169,11 +174,10 @@ class DaisyGenerator:
     def get_metadata(self) -> list[dict[str, str]]:
         if self.metadata:
             return self.metadata
-        # metadata is by book_id, not by doc
-        md_path = os.path.join(self.book_path, self.book_id + '_meta.xml')
-        md = objectify.parse(md_path).getroot()
+        md_path = os.path.join(self.ia_item_path, self.ia_item_name + '_meta.xml')
+        md = ET.parse(md_path).getroot()
         result = []
-        for el in md.iterchildren():
+        for el in md:
             if el.tag == 'language':
                 # TODO look at how hocr-to-epub handles this.
                 # result_text = iso_639_23_to_iso_639_1(el.text)
@@ -185,22 +189,20 @@ class DaisyGenerator:
         return result
 
     # TODO: candidate for removal/refactor
-    def get_toc(self) -> None:
+    def get_toc(self):
         if self.toc is not None:
             return self.toc
-        toc_path = os.path.join(self.book_path, self.doc + '_toc.xml')
+        toc_path = os.path.join(self.ia_item_path, self.ia_doc_name + '_toc.xml')
         if not os.path.exists(toc_path):
             return None
-        toc = objectify.parse(toc_path).getroot()
-        result = {}
-        for el in toc.iterchildren():
-            result[el.get('page')] = el.get('title')
+        toc = ET.parse(toc_path).getroot()
+        result = {el.get('page'): el.get('title') for el in toc}
         return result
 
     # TODO: candidate for removal/refactor
     def has_pagenos(self) -> bool:
         self.get_scandata()
-        max_page = len(self.scandata_pages)
+        max_page = len(self.scandata_pages) if self.scandata_pages else 0
         i = 0
         result = False
         while i < max_page:
@@ -213,14 +215,14 @@ class DaisyGenerator:
         return result
 
     # TODO: candidate for removal/refactor
-    def get_page_scandata(self, i: int) -> ObjectifiedElement:
+    def get_page_scandata(self, i: int) -> ET.Element:
         self.get_scandata()
         if i >= len(self.scandata_pages):
             return None
         return self.scandata_pages[int(i)]
 
     # TODO: candidate for removal/refactor
-    def get_scandata_pages(self) -> list[ObjectifiedElement]:
+    def get_scandata_pages(self) -> list[ET.Element]:
         self.get_scandata()
         return self.scandata_pages
 
@@ -365,7 +367,8 @@ class DaisyGenerator:
 
         found_title = False
         for page_scandata in self.get_scandata_pages():  # confirm title exists
-            t = page_scandata.pageType.text
+            # TODO: handle `None`
+            t = page_scandata.find(f'{NAMESPACE}pageType').text
             if t == 'Title' or t == 'Title Page':
                 found_title = True
                 break
@@ -405,8 +408,9 @@ class DaisyGenerator:
                 if not include_page(page_scandata):
                     continue
 
-                page_type = page_scandata.pageType.text.lower()
-                add_to_access_formats = page_scandata.addToAccessFormats.text.lower()
+                # TODO: handle None
+                page_type = page_scandata.find(f'{NAMESPACE}pageType').text.lower()
+                add_to_access_formats = page_scandata.find(f'{NAMESPACE}addToAccessFormats').text.lower()
                 if page_type == 'cover':
                     pass
 
@@ -477,6 +481,9 @@ if __name__ == '__main__':
     parser.add_argument('-f', '--infile', help='Item _hocr.html file', type=str, default=None)
     parser.add_argument('-o', '--outfile', help='Output DAISY zip', type=str, default=None)
     parser.add_argument('-w', '--workingdir', help='Directory used for temp files', type=str, default=None)
+    parser.add_argument('-i', '--itemdir', help='Directory of the Internet Archive item', type=str, default=None)
+    parser.add_argument('-n', '--itemname', help='Internet Archive item name', type=str, default=None)
+    parser.add_argument('-d', '--docname', help='Internet Archive document name', type=str, default=None)
 
     args = parser.parse_args()
 
@@ -489,11 +496,10 @@ if __name__ == '__main__':
 
     # The relation of these will need to be rethought.
     # TODO: should be args.infile
-    dg = DaisyGenerator(hocr_xml_file_path=args.infile)
+    dg = DaisyGenerator(hocr_xml_file_path=args.infile, ia_item_name=args.itemname, ia_item_path=args.itemdir)
     metadata = dg.get_metadata()
 
-    out_name = "test_daisy_output.zip"
-    daisy_book = daisy.book.DaisyBook(out_name=out_name, metadata=metadata)
+    daisy_book = daisy.book.DaisyBook(out_name=args.outfile, metadata=metadata)
     dg.process_book_hocr(ebook=daisy_book)
     daisy_book.finish(metadata)
 
