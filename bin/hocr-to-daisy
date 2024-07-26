@@ -105,16 +105,20 @@ class DaisyGenerator:
     metadata = None
     scandata = None
 
-    def __init__(self, hocr_xml_file_path: str, ia_item_name: str = "", ia_item_path: str = "", ia_doc_name: str = "") -> None:
+    def __init__(
+        self,
+        hocr_xml_file_path: str,
+        ia_item_name: str = "",
+        ia_item_path: str = "",
+        ia_doc_name: str = "",
+    ) -> None:
         self.hocr_xml_file_path = hocr_xml_file_path
         self.ia_item_name = ia_item_name
         self.ia_item_path = ia_item_path
         self.ia_doc_name = ia_doc_name
 
-
     # TODO: candidate for removal/refactor
     def get_hocr(self):
-
         if os.path.exists(self.hocr_xml_file_path):
             return open(self.hocr_xml_file_path, 'rb')
         raise FileNotFoundError('No hOCR file found')
@@ -147,9 +151,13 @@ class DaisyGenerator:
                 # TODO: this branch needs testing
                 # TODO: can test with non-zipped scandata file?
                 self.scandata = ET.parse(scandata_path).getroot()
-                self.scandata_pages = self.scandata.findall(f'{NAMESPACE}/pageData/page')
+                self.scandata_pages = self.scandata.findall(
+                    f'{NAMESPACE}/pageData/page'
+                )
 
-            self.leaves = {int(page.get('leafNum', 0)): page for page in self.scandata_pages}
+            self.leaves = {
+                int(page.get('leafNum', 0)): page for page in self.scandata_pages
+            }
         return self.scandata
 
     # TODO: candidate for removal/refactor
@@ -272,7 +280,7 @@ class DaisyGenerator:
 
             # Encode
             line_words = line_words.encode('utf-8')
-            #line_words = line_words.strip().encode('utf-8')
+            # line_words = line_words.strip().encode('utf-8')
 
             # Write out
             if line_words:
@@ -283,7 +291,6 @@ class DaisyGenerator:
             par_text = par_text[:-1]
 
         return par_text
-
 
     # def process_book_hocr(self, iabook: "iarchive.Book", ebook: "daisy.Book", alt_booktext=None):
     def process_book_hocr(self, ebook: "daisy.book.DaisyBook", alt_booktext=None):
@@ -375,7 +382,6 @@ class DaisyGenerator:
         # True if no title found, else False now, True later.
         before_title_page = found_title
         for i, page in enumerate(hocr_iterator):
-
             # wrap in try/finally to ensure page.clear() is called
             try:
                 if alt_booktext is not None:
@@ -410,7 +416,9 @@ class DaisyGenerator:
 
                 # TODO: handle None
                 page_type = page_scandata.find(f'{NAMESPACE}pageType').text.lower()
-                add_to_access_formats = page_scandata.find(f'{NAMESPACE}addToAccessFormats').text.lower()
+                add_to_access_formats = page_scandata.find(
+                    f'{NAMESPACE}addToAccessFormats'
+                ).text.lower()
                 if page_type == 'cover':
                     pass
 
@@ -446,7 +454,11 @@ class DaisyGenerator:
                             first_par = False
 
                             # Last paragraph
-                            if not saw_pageno_header_footer and paridx == len(pars) - 1 and self.par_is_pageno_header_footer_hocr(par):
+                            if (
+                                not saw_pageno_header_footer
+                                and paridx == len(pars) - 1
+                                and self.par_is_pageno_header_footer_hocr(par)
+                            ):
                                 saw_pageno_header_footer = True
                                 continue
 
@@ -478,12 +490,32 @@ class DaisyGenerator:
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='hOCR to DAISY converter')
 
-    parser.add_argument('-f', '--infile', help='Item _hocr.html file', type=str, default=None)
-    parser.add_argument('-o', '--outfile', help='Output DAISY zip', type=str, default=None)
-    parser.add_argument('-w', '--workingdir', help='Directory used for temp files', type=str, default=None)
-    parser.add_argument('-i', '--itemdir', help='Directory of the Internet Archive item', type=str, default=None)
-    parser.add_argument('-n', '--itemname', help='Internet Archive item name', type=str, default=None)
-    parser.add_argument('-d', '--docname', help='Internet Archive document name', type=str, default=None)
+    parser.add_argument(
+        '-f', '--infile', help='Item _hocr.html file', type=str, default=None
+    )
+    parser.add_argument(
+        '-o', '--outfile', help='Output DAISY zip', type=str, default=None
+    )
+    parser.add_argument(
+        '-w',
+        '--workingdir',
+        help='Directory used for temp files',
+        type=str,
+        default=None,
+    )
+    parser.add_argument(
+        '-i',
+        '--itemdir',
+        help='Directory of the Internet Archive item',
+        type=str,
+        default=None,
+    )
+    parser.add_argument(
+        '-n', '--itemname', help='Internet Archive item name', type=str, default=None
+    )
+    parser.add_argument(
+        '-d', '--docname', help='Internet Archive document name', type=str, default=None
+    )
 
     args = parser.parse_args()
 
@@ -496,11 +528,13 @@ if __name__ == '__main__':
 
     # The relation of these will need to be rethought.
     # TODO: should be args.infile
-    dg = DaisyGenerator(hocr_xml_file_path=args.infile, ia_item_name=args.itemname, ia_item_path=args.itemdir)
+    dg = DaisyGenerator(
+        hocr_xml_file_path=args.infile,
+        ia_item_name=args.itemname,
+        ia_item_path=args.itemdir,
+    )
     metadata = dg.get_metadata()
 
     daisy_book = daisy.book.DaisyBook(out_name=args.outfile, metadata=metadata)
     dg.process_book_hocr(ebook=daisy_book)
     daisy_book.finish(metadata)
-
-

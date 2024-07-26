@@ -19,7 +19,9 @@ def get_metadata_tag_data(metadata: list[dict[str, str]], tag: str) -> str:
 
 # TODO: candidate for removal/refactor
 def tree_to_str(tree: ET.ElementTree, xml_declaration: bool = True) -> bytes:
-    return ET.tostring(tree.getroot(), encoding='utf-8', xml_declaration=xml_declaration)
+    return ET.tostring(
+        tree.getroot(), encoding='utf-8', xml_declaration=xml_declaration
+    )
 
 
 class DaisyBook:
@@ -79,7 +81,11 @@ class DaisyBook:
                 'href': self.dtbook_file,
                 'media-type': 'application/x-dtbook+xml',
             },
-            {'id': 'opf', 'href': self.book_id + '_daisy.opf', 'media-type': 'text/xml'},
+            {
+                'id': 'opf',
+                'href': self.book_id + '_daisy.opf',
+                'media-type': 'text/xml',
+            },
             {
                 'id': 'ncx',
                 'href': self.ncx_file,
@@ -152,7 +158,7 @@ class DaisyBook:
     ) -> ET.Element:
         level = str(len(self.navpoint_stack))
         level_id_str = self.push_tag(ltag + level)
-        htag_id_str, _ = self.add_tag(
+        htag_id_str, htag_dtb_el = self.add_tag(
             htag + level, text, smil_attrs={'customTest': 'headerCustomTest'}
         )
         current_navpoint_el = self.navpoint_stack[-1]
@@ -238,7 +244,10 @@ class DaisyBook:
         print(f"{metadata = }")
         root = "<?xml version='1.0' encoding='utf-8'?>\n"
 
-        prefix_xml = root + '<!DOCTYPE package PUBLIC "+//ISBN 0-9673008-1-9//DTD OEB 1.2 Package//EN" "http://openebook.org/dtds/oeb-1.2/oebpkg12.dtd">'
+        prefix_xml = (
+            root
+            + '<!DOCTYPE package PUBLIC "+//ISBN 0-9673008-1-9//DTD OEB 1.2 Package//EN" "http://openebook.org/dtds/oeb-1.2/oebpkg12.dtd">'
+        )
         tree_str = make_opf(metadata, self.manifest_items)
         self.add(self.content_dir + self.opf_file, tree_str)
 
@@ -249,7 +258,10 @@ class DaisyBook:
         ]
         for item in metas:
             ET.SubElement(self.ncx_head_el, 'meta', item)
-        prefix_xml = root + '<!DOCTYPE ncx PUBLIC "-//NISO//DTD ncx 2005-1//EN" "http://www.daisy.org/z3986/2005/ncx-2005-1.dtd">'
+        prefix_xml = (
+            root
+            + '<!DOCTYPE ncx PUBLIC "-//NISO//DTD ncx 2005-1//EN" "http://www.daisy.org/z3986/2005/ncx-2005-1.dtd">'
+        )
         tree_str = tree_to_str_with_processing(self.ncx, prefix_xml)
         self.add(self.content_dir + self.ncx_file, tree_str)
 
@@ -260,7 +272,10 @@ class DaisyBook:
         tree_str = tree_to_str_with_processing(self.dtbook, prefix_xml)
         self.add(self.content_dir + self.dtbook_file, tree_str)
 
-        prefix_xml = root + '<!DOCTYPE smil PUBLIC "-//NISO//DTD dtbsmil 2005-2//EN" "http://www.daisy.org/z3986/2005/dtbsmil-2005-2.dtd">\n'
+        prefix_xml = (
+            root
+            + '<!DOCTYPE smil PUBLIC "-//NISO//DTD dtbsmil 2005-2//EN" "http://www.daisy.org/z3986/2005/dtbsmil-2005-2.dtd">\n'
+        )
         tree_str = tree_to_str_with_processing(self.smil, prefix_xml)
         self.add(self.content_dir + self.smil_file, tree_str)
 
@@ -271,17 +286,26 @@ dc = 'http://purl.org/dc/elements/1.1/'
 dcb = '{' + dc + '}'
 
 
-def make_opf(metadata: list[dict[str, str]], manifest_items: list[dict[str, str]]) -> str:
-    root_el = ET.Element('package', {
-        'xmlns': 'http://openebook.org/namespaces/oeb-package/1.0/',
-        'unique-identifier': 'bookid'
-    })
+def make_opf(
+    metadata: list[dict[str, str]], manifest_items: list[dict[str, str]]
+) -> str:
+    root_el = ET.Element(
+        'package',
+        {
+            'xmlns': 'http://openebook.org/namespaces/oeb-package/1.0/',
+            'unique-identifier': 'bookid',
+        },
+    )
 
     metadata_el = ET.SubElement(root_el, 'metadata')
-    dc_metadata_el = ET.SubElement(metadata_el, 'dc-metadata', {
-        'xmlns:dc': 'http://purl.org/dc/elements/1.1/',
-        'xmlns:oebpackage': 'http://openebook.org/namespaces/oeb-package/1.0/'
-    })
+    dc_metadata_el = ET.SubElement(
+        metadata_el,
+        'dc-metadata',
+        {
+            'xmlns:dc': 'http://purl.org/dc/elements/1.1/',
+            'xmlns:oebpackage': 'http://openebook.org/namespaces/oeb-package/1.0/',
+        },
+    )
 
     el = ET.SubElement(dc_metadata_el, 'dc:Format')
     el.text = 'ANSI/NISO Z39.86-2005'
@@ -289,9 +313,21 @@ def make_opf(metadata: list[dict[str, str]], manifest_items: list[dict[str, str]
     for md in metadata:
         tagname = md['tag']
         if tagname not in [
-            'title', 'creator', 'subject', 'description', 'publisher', 'contributor',
-            'date', 'type', 'format', 'identifier', 'source', 'language', 'relation',
-            'coverage', 'rights'
+            'title',
+            'creator',
+            'subject',
+            'description',
+            'publisher',
+            'contributor',
+            'date',
+            'type',
+            'format',
+            'identifier',
+            'source',
+            'language',
+            'relation',
+            'coverage',
+            'rights',
         ]:
             continue
         dctag = f'dc:{tagname[:1].upper()}{tagname[1:]}'
@@ -302,8 +338,12 @@ def make_opf(metadata: list[dict[str, str]], manifest_items: list[dict[str, str]
         el.text = md['text']
 
     x_metadata_el = ET.SubElement(metadata_el, 'x-metadata')
-    ET.SubElement(x_metadata_el, 'meta', {'name': 'dtb:multimediaType', 'content': 'textNCX'})
-    ET.SubElement(x_metadata_el, 'meta', {'name': 'dtb:multimediaContent', 'content': 'text'})
+    ET.SubElement(
+        x_metadata_el, 'meta', {'name': 'dtb:multimediaType', 'content': 'textNCX'}
+    )
+    ET.SubElement(
+        x_metadata_el, 'meta', {'name': 'dtb:multimediaContent', 'content': 'text'}
+    )
     ET.SubElement(x_metadata_el, 'meta', {'name': 'dtb:totalTime', 'content': '0'})
 
     manifest_el = ET.SubElement(root_el, 'manifest')
@@ -315,20 +355,31 @@ def make_opf(metadata: list[dict[str, str]], manifest_items: list[dict[str, str]
 
     tree = ET.ElementTree(root_el)
     root = "<?xml version='1.0' encoding='utf-8'?>\n"
-    prefix_xml = root + '<!DOCTYPE package PUBLIC "+//ISBN 0-9673008-1-9//DTD OEB 1.2 Package//EN" "http://openebook.org/dtds/oeb-1.2/oebpkg12.dtd">'
+    prefix_xml = (
+        root
+        + '<!DOCTYPE package PUBLIC "+//ISBN 0-9673008-1-9//DTD OEB 1.2 Package//EN" "http://openebook.org/dtds/oeb-1.2/oebpkg12.dtd">'
+    )
     return tree_to_str_with_processing(tree, prefix_xml)
 
 
-def tree_to_str_with_processing(tree: ET.ElementTree, prefix_xml: str, xml_declaration: bool = False) -> str:
-    xml_str = ET.tostring(tree.getroot(), encoding='unicode', method='xml', xml_declaration=xml_declaration)
+def tree_to_str_with_processing(
+    tree: ET.ElementTree, prefix_xml: str, xml_declaration: bool = False
+) -> str:
+    xml_str = ET.tostring(
+        tree.getroot(),
+        encoding='unicode',
+        method='xml',
+        xml_declaration=xml_declaration,
+    )
     # return add_processing_instructions(xml_str)
     return prefix_xml + xml_str
 
+
 def make_dtbook(book_id: str, title: str) -> tuple[ET.ElementTree, ET.Element]:
-    root_el = ET.Element('dtbook', {
-        'xmlns': 'http://www.daisy.org/z3986/2005/dtbook/',
-        'version': '2005-3'
-    })
+    root_el = ET.Element(
+        'dtbook',
+        {'xmlns': 'http://www.daisy.org/z3986/2005/dtbook/', 'version': '2005-3'},
+    )
 
     head_el = ET.SubElement(root_el, 'head')
     ET.SubElement(head_el, 'meta', {'name': 'dtb:uid', 'content': book_id})
@@ -338,66 +389,81 @@ def make_dtbook(book_id: str, title: str) -> tuple[ET.ElementTree, ET.Element]:
     tree = ET.ElementTree(root_el)
     return tree, book_el
 
+
 def make_smil(book_id: str) -> tuple[ET.ElementTree, ET.Element]:
-    root_el = ET.Element('smil', {
-        'xmlns': 'http://www.w3.org/2001/SMIL20/'
-    })
+    root_el = ET.Element('smil', {'xmlns': 'http://www.w3.org/2001/SMIL20/'})
 
     head_el = ET.SubElement(root_el, 'head')
     ET.SubElement(head_el, 'meta', {'name': 'dtb:uid', 'content': book_id})
-    ET.SubElement(head_el, 'meta', {'name': 'dtb:generator', 'content': content_generator})
+    ET.SubElement(
+        head_el, 'meta', {'name': 'dtb:generator', 'content': content_generator}
+    )
     ET.SubElement(head_el, 'meta', {'name': 'dtb:totalElapsedTime', 'content': '0'})
     layout_el = ET.SubElement(head_el, 'layout')
-    ET.SubElement(layout_el, 'region', {
-        'id': 'textRegion',
-        'fit': 'hidden',
-        'showBackground': 'always',
-        'height': 'auto',
-        'width': 'auto',
-        'bottom': 'auto',
-        'top': 'auto',
-        'left': 'auto',
-        'right': 'auto',
-    })
+    ET.SubElement(
+        layout_el,
+        'region',
+        {
+            'id': 'textRegion',
+            'fit': 'hidden',
+            'showBackground': 'always',
+            'height': 'auto',
+            'width': 'auto',
+            'bottom': 'auto',
+            'top': 'auto',
+            'left': 'auto',
+            'right': 'auto',
+        },
+    )
     customattributes_el = ET.SubElement(head_el, 'customAttributes')
-    ET.SubElement(customattributes_el, 'customTest', {
-        'id': 'pagenumCustomTest',
-        'defaultState': 'false',
-        'override': 'visible'
-    })
-    ET.SubElement(customattributes_el, 'customTest', {
-        'id': 'headerCustomTest',
-        'defaultState': 'false',
-        'override': 'visible'
-    })
+    ET.SubElement(
+        customattributes_el,
+        'customTest',
+        {'id': 'pagenumCustomTest', 'defaultState': 'false', 'override': 'visible'},
+    )
+    ET.SubElement(
+        customattributes_el,
+        'customTest',
+        {'id': 'headerCustomTest', 'defaultState': 'false', 'override': 'visible'},
+    )
 
     body_el = ET.SubElement(root_el, 'body')
     seq_el = ET.SubElement(body_el, 'seq', {'id': 'toplevel_seq_id'})
     tree = ET.ElementTree(root_el)
     return tree, seq_el
 
-def make_ncx(book_id: str, title: str, author: str) -> tuple[ET.ElementTree, ET.Element, ET.Element, ET.Element]:
-    root_el = ET.Element('ncx', {
-        'xmlns': 'http://www.daisy.org/z3986/2005/ncx/',
-        'version': '2005-1'
-    })
+
+def make_ncx(
+    book_id: str, title: str, author: str
+) -> tuple[ET.ElementTree, ET.Element, ET.Element, ET.Element]:
+    root_el = ET.Element(
+        'ncx', {'xmlns': 'http://www.daisy.org/z3986/2005/ncx/', 'version': '2005-1'}
+    )
 
     head_el = ET.SubElement(root_el, 'head')
-    ET.SubElement(head_el, 'smilCustomTest', {
-        'id': 'pagenumCustomTest',
-        'defaultState': 'false',
-        'override': 'visible',
-        'bookStruct': 'PAGE_NUMBER'
-    })
-    ET.SubElement(head_el, 'smilCustomTest', {
-        'id': 'headerCustomTest',
-        'defaultState': 'false',
-        'override': 'visible',
-        'bookStruct': 'PAGE_NUMBER'
-    })
+    ET.SubElement(
+        head_el,
+        'smilCustomTest',
+        {
+            'id': 'pagenumCustomTest',
+            'defaultState': 'false',
+            'override': 'visible',
+            'bookStruct': 'PAGE_NUMBER',
+        },
+    )
+    ET.SubElement(
+        head_el,
+        'smilCustomTest',
+        {
+            'id': 'headerCustomTest',
+            'defaultState': 'false',
+            'override': 'visible',
+            'bookStruct': 'PAGE_NUMBER',
+        },
+    )
     metas = [
         {'name': 'dtb:uid', 'content': book_id},
-        {'name': 'dtb:generator', 'content': content_generator}
+        {'name': 'dtb:generator', 'content': content_generator},
     ]
     for item in metas:
         ET.SubElement(head_el, 'meta', item)
