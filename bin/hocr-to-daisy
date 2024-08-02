@@ -145,7 +145,8 @@ class DaisyGenerator:
                 with zipfile.ZipFile(scandata_path, 'r') as z:
                     scandata_str = z.read('scandata.xml')
                     self.scandata = ET.fromstring(scandata_str)
-                    if pageData := self.scandata.find(f'{NAMESPACE}pageData'):
+                    pageData = self.scandata.find(f'{NAMESPACE}pageData')
+                    if pageData is not None:
                         self.scandata_pages = pageData.findall(f'{NAMESPACE}page')
             else:
                 # TODO: this branch needs testing
@@ -216,7 +217,7 @@ class DaisyGenerator:
         while i < max_page:
             page_scandata = self.get_page_scandata(i)
             pageno = page_scandata.find(self.get_scandata_ns() + 'pageNumber')
-            if pageno:
+            if pageno is not None:
                 result = True
                 break
             i += 1
@@ -392,9 +393,9 @@ class DaisyGenerator:
                 pageno = None
                 if page_scandata is not None:
                     pageno = page_scandata.find(scandata_ns + 'pageNumber')
-                    if pageno:
+                    if pageno is not None:
                         pageno = pageno.text
-                if pageno:
+                if pageno is not None:
                     if contents is not None and pageno in contents:
                         if pushed_navpoint:
                             ebook.pop_navpoint()
