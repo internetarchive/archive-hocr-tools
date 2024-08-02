@@ -4,6 +4,8 @@ import zipfile
 import xml.etree.ElementTree as ET
 from datetime import datetime
 
+from .util import roman_to_num
+
 
 # This becomes the dtb:generator meta in the generated book
 content_generator = 'Internet Archive - archive.org'
@@ -191,12 +193,23 @@ class DaisyBook:
         self.pop_tag()
         return self.navpoint_stack.pop()
 
-    def add_pagetarget(self, name, value, type_='normal'):
+    def add_pagetarget(self, name: str, value: str, type_: str = 'normal') -> None:
         self.total_page_count += 1
-        if value.isdigit() and isinstance(value, str):
-            value = int(value)
-        if value > self.max_page_number:
-            self.max_page_number = value
+
+        if isinstance(value, int):
+            int_value = value
+        elif value.isdigit():
+            int_value = int(value)
+        elif roman := roman_to_num(value):
+            int_value = roman
+        else:
+            error_text = "Got non-Arabic, non-Roman numeral, or negative pagetarget value"
+            raise ValueError(error_text)
+
+        if int_value > self.max_page_number:
+            self.max_page_number = int_value
+
+
         pagenum_id, pagenum_el = self.add_tag(
             'pagenum',
             name,
