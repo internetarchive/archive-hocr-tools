@@ -7,6 +7,8 @@ from typing import Final
 import xml.etree.ElementTree as ET
 import zipfile
 
+import iso639
+
 import daisy
 from daisy.util import roman_to_num
 import hocr
@@ -105,9 +107,7 @@ class DaisyGenerator:
         result = []
         for el in md:
             if el.tag == 'language':
-                # TODO look at how hocr-to-epub handles this.
-                # result_text = iso_639_23_to_iso_639_1(el.text)
-                result_text = el.text
+                result_text = iso639.to_iso639_1(el.text)
             else:
                 result_text = el.text
             result.append({'tag': el.tag, 'text': result_text})
