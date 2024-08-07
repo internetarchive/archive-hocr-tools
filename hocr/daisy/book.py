@@ -5,6 +5,8 @@ import zipfile
 import xml.etree.ElementTree as ET
 from datetime import datetime
 
+import pkg_resources
+
 from .util import roman_to_num
 
 
@@ -73,8 +75,7 @@ class DaisyBook:
             'html.css',
             'resource.res',
         ]:
-            # TODO: fix pathing.
-            content_src = os.path.join(sys.path[0], '../daisy/daisy_files', content)
+            content_src = pkg_resources.resource_filename('hocr', f'daisy/daisy_files/{content}')
             content_str = open(content_src).read()
             self.add(self.content_dir + content, content_str)
 
@@ -204,12 +205,13 @@ class DaisyBook:
         elif roman_to_num(value):
             int_value = roman_to_num(value)
         else:
-            error_text = "Got non-Arabic, non-Roman numeral, or negative pagetarget value"
+            error_text = (
+                "Got non-Arabic, non-Roman numeral, or negative pagetarget value"
+            )
             raise ValueError(error_text)
 
         if int_value > self.max_page_number:
             self.max_page_number = int_value
-
 
         pagenum_id, pagenum_el = self.add_tag(
             'pagenum',

@@ -9,9 +9,8 @@ import zipfile
 
 import iso639
 
-import daisy
-from daisy.util import roman_to_num
 import hocr
+from hocr import daisy
 
 NAMESPACE = '{http://archive.org/scribe/xml}'
 
@@ -174,7 +173,7 @@ class DaisyGenerator:
         for word in line['words']:
             if word['fontsize'] > 40:
                 continue
-            if roman_to_num(word['text'].lower()) > 0:
+            if daisy.util.roman_to_num(word['text'].lower()) > 0:
                 return True
             # common OCR errors
             if re.match('[0-9io]+', word['text']):
@@ -214,7 +213,6 @@ class DaisyGenerator:
 
         return par_text
 
-    # def process_book_hocr(self, iabook: "iarchive.Book", ebook: "daisy.Book", alt_booktext=None):
     def process_book_hocr(self, ebook: "daisy.book.DaisyBook", alt_booktext=None):
         # TODO: maybe ultimately just make the initial DaisyBook here?
         scandata = self.get_scandata()
