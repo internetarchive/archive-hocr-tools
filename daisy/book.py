@@ -1,5 +1,6 @@
 import os
 import sys
+from typing import Dict, List, Tuple, Union
 import zipfile
 import xml.etree.ElementTree as ET
 from datetime import datetime
@@ -12,7 +13,7 @@ content_generator = 'Internet Archive - archive.org'
 
 
 # TODO: candidate for removal/refactor
-def get_metadata_tag_data(metadata: list[dict[str, str]], tag: str) -> str:
+def get_metadata_tag_data(metadata: List[Dict[str, str]], tag: str) -> str:
     for el in metadata:
         if el['tag'] == tag:
             return el['text']
@@ -30,7 +31,7 @@ class DaisyBook:
     def __init__(
         self,
         out_name: str,
-        metadata: list[dict[str, str]],
+        metadata: List[Dict[str, str]],
         content_dir: str = '',
     ) -> None:
         self.dt = datetime.now()
@@ -112,7 +113,7 @@ class DaisyBook:
         self,
         tag: str,
         text: str = '',
-        attrs: dict[str, str] = {},
+        attrs: Dict[str, str] = {},
     ) -> str:
         # tag is e.g. frontmatter, bodymatter, rearmatter, level, etc.
         id_str, dtb_el = self.add_tag(tag, text, attrs)
@@ -126,9 +127,9 @@ class DaisyBook:
         self,
         tag: str,
         text: str = '',
-        attrs: dict[str, str] = {},
-        smil_attrs: dict[str, str] = {},
-    ) -> tuple[str, ET.Element]:
+        attrs: Dict[str, str] = {},
+        smil_attrs: Dict[str, str] = {},
+    ) -> Tuple[str, ET.Element]:
         id_str = tag + '_' + (str(self.id_index).zfill(5))
         attrs['id'] = id_str
         if text is not None and len(text) > 0:
@@ -200,8 +201,8 @@ class DaisyBook:
             int_value = value
         elif value.isdigit():
             int_value = int(value)
-        elif roman := roman_to_num(value):
-            int_value = roman
+        elif roman_to_num(value):
+            int_value = roman_to_num(value)
         else:
             error_text = "Got non-Arabic, non-Roman numeral, or negative pagetarget value"
             raise ValueError(error_text)
@@ -236,7 +237,7 @@ class DaisyBook:
     def add(
         self,
         path: str,
-        content_str: bytes | str,
+        content_str: Union[bytes, str],
         deflate: bool = True,
     ) -> None:
         info = zipfile.ZipInfo(path)
@@ -253,8 +254,7 @@ class DaisyBook:
         self.z.writestr(info, content_str)
 
     # TODO: better handle the XML post-processing.
-    def finish(self, metadata: list[dict[str, str]]) -> None:
-        print(f"{metadata = }")
+    def finish(self, metadata: List[Dict[str, str]]) -> None:
         root = "<?xml version='1.0' encoding='utf-8'?>\n"
 
         prefix_xml = (
@@ -300,7 +300,7 @@ dcb = '{' + dc + '}'
 
 
 def make_opf(
-    metadata: list[dict[str, str]], manifest_items: list[dict[str, str]]
+    metadata: List[Dict[str, str]], manifest_items: List[Dict[str, str]]
 ) -> str:
     root_el = ET.Element(
         'package',
@@ -375,20 +375,16 @@ def make_opf(
     return tree_to_str_with_processing(tree, prefix_xml)
 
 
-def tree_to_str_with_processing(
-    tree: ET.ElementTree, prefix_xml: str, xml_declaration: bool = False
-) -> str:
+def tree_to_str_with_processing(tree: ET.ElementTree, prefix_xml: str) -> str:
     xml_str = ET.tostring(
         tree.getroot(),
         encoding='unicode',
         method='xml',
-        xml_declaration=xml_declaration,
     )
-    # return add_processing_instructions(xml_str)
     return prefix_xml + xml_str
 
 
-def make_dtbook(book_id: str, title: str) -> tuple[ET.ElementTree, ET.Element]:
+def make_dtbook(book_id: str, title: str) -> Tuple[ET.ElementTree, ET.Element]:
     root_el = ET.Element(
         'dtbook',
         {'xmlns': 'http://www.daisy.org/z3986/2005/dtbook/', 'version': '2005-3'},
@@ -403,7 +399,7 @@ def make_dtbook(book_id: str, title: str) -> tuple[ET.ElementTree, ET.Element]:
     return tree, book_el
 
 
-def make_smil(book_id: str) -> tuple[ET.ElementTree, ET.Element]:
+def make_smil(book_id: str) -> Tuple[ET.ElementTree, ET.Element]:
     root_el = ET.Element('smil', {'xmlns': 'http://www.w3.org/2001/SMIL20/'})
 
     head_el = ET.SubElement(root_el, 'head')
@@ -448,7 +444,7 @@ def make_smil(book_id: str) -> tuple[ET.ElementTree, ET.Element]:
 
 def make_ncx(
     book_id: str, title: str, author: str
-) -> tuple[ET.ElementTree, ET.Element, ET.Element, ET.Element]:
+) -> Tuple[ET.ElementTree, ET.Element, ET.Element, ET.Element]:
     root_el = ET.Element(
         'ncx', {'xmlns': 'http://www.daisy.org/z3986/2005/ncx/', 'version': '2005-1'}
     )

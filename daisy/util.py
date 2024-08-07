@@ -1,6 +1,7 @@
-from typing import Final
+from typing import Optional
 
-ROMAN_ARABIC_MAP: Final = {
+
+ROMAN_ARABIC_MAP = {
     "I": 1,
     "V": 5,
     "X": 10,
@@ -11,7 +12,7 @@ ROMAN_ARABIC_MAP: Final = {
 }
 
 
-def roman_to_num(s: str, up_to: str | None = None) -> int:
+def roman_to_num(s: str, up_to: Optional[str] = None) -> int:
     """
     Convert a Roman numeral string, s, to an int.
 

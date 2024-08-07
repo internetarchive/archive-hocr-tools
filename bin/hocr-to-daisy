@@ -3,7 +3,7 @@
 import argparse
 import os
 import re
-from typing import Final
+from typing import Dict, List
 import xml.etree.ElementTree as ET
 import zipfile
 
@@ -13,7 +13,7 @@ import daisy
 from daisy.util import roman_to_num
 import hocr
 
-NAMESPACE: Final = '{http://archive.org/scribe/xml}'
+NAMESPACE = '{http://archive.org/scribe/xml}'
 
 
 class DaisyGenerator:
@@ -99,7 +99,7 @@ class DaisyGenerator:
         return bookdata
 
     # TODO: candidate for removal/refactor
-    def get_metadata(self) -> list[dict[str, str]]:
+    def get_metadata(self) -> List[Dict[str, str]]:
         if self.metadata:
             return self.metadata
         md_path = os.path.join(self.ia_item_path, self.ia_item_name + '_meta.xml')
@@ -152,7 +152,7 @@ class DaisyGenerator:
         return self.scandata_pages[int(i)]
 
     # TODO: candidate for removal/refactor
-    def get_scandata_pages(self) -> list[ET.Element]:
+    def get_scandata_pages(self) -> List[ET.Element]:
         self.get_scandata()
         return self.scandata_pages
 
