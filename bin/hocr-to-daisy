@@ -107,7 +107,11 @@ class DaisyGenerator:
         result = []
         for el in md:
             if el.tag == 'language':
-                result_text = iso639.to_iso639_1(el.text)
+                try:
+                    result_text = iso639.to_iso639_1(el.text)
+                except iso639.NonExistentLanguageError as e:
+                    print(f"Could not convert {el.text} to an iso639-1 code: {e}")
+                    result_text = el.text
             else:
                 result_text = el.text
             result.append({'tag': el.tag, 'text': result_text})
