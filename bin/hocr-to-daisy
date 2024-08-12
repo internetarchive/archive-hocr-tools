@@ -452,6 +452,7 @@ if __name__ == '__main__':
         hocr_xml_file_path=args.infile,
         ia_item_name=args.itemname,
         ia_item_path=args.itemdir,
+        ia_doc_name=args.docname,
     )
     metadata = dg.get_metadata()
 
