@@ -12,8 +12,6 @@ import iso639
 import hocr
 from hocr import daisy
 
-NAMESPACE = '{http://archive.org/scribe/xml}'
-
 
 class DaisyGenerator:
     __version__ = '1.0.0'
@@ -53,26 +51,34 @@ class DaisyGenerator:
                 return sd_path
         raise Exception('No scandata found')
 
-    # TODO: candidate for removal/refactor
+    def set_namespace(self) -> None:
+        """
+        Set the namespace, if any, because Python's XML.etree won't work without
+        it, if it is present. But not all scandata files have a namespace
+        specified.
+        """
+        self.namespace = ''
+        root = self.scandata
+        if root.tag.startswith('{'):
+            self.namespace = '{' + root.tag.split('}')[0][1:] + '}'
 
+    # TODO: candidate for removal/refactor
     def get_scandata(self) -> ET.Element:
         if self.scandata is None:
             scandata_path = self.get_scandata_path()
             _, ext = os.path.splitext(scandata_path)
+
             if ext.lower() == '.zip':
                 with zipfile.ZipFile(scandata_path, 'r') as z:
                     scandata_str = z.read('scandata.xml')
                     self.scandata = ET.fromstring(scandata_str)
-                    pageData = self.scandata.find(f'{NAMESPACE}pageData')
-                    if pageData is not None:
-                        self.scandata_pages = pageData.findall(f'{NAMESPACE}page')
             else:
-                # TODO: this branch needs testing
-                # TODO: can test with non-zipped scandata file?
                 self.scandata = ET.parse(scandata_path).getroot()
-                self.scandata_pages = self.scandata.findall(
-                    f'{NAMESPACE}/pageData/page'
-                )
+
+            self.set_namespace()
+            pageData = self.scandata.find(f'{self.namespace}pageData')
+            if pageData is not None:
+                self.scandata_pages = pageData.findall(f'{self.namespace}page')
 
             self.leaves = {
                 int(page.get('leafNum', 0)): page for page in self.scandata_pages
@@ -295,7 +301,7 @@ class DaisyGenerator:
         found_title = False
         for page_scandata in self.get_scandata_pages():  # confirm title exists
             # TODO: handle `None`
-            t = page_scandata.find(f'{NAMESPACE}pageType').text
+            t = page_scandata.find(f'{self.namespace}pageType').text
             if t == 'Title' or t == 'Title Page':
                 found_title = True
                 break
@@ -335,9 +341,9 @@ class DaisyGenerator:
                     continue
 
                 # TODO: handle None
-                page_type = page_scandata.find(f'{NAMESPACE}pageType').text.lower()
+                page_type = page_scandata.find(f'{self.namespace}pageType').text.lower()
                 add_to_access_formats = page_scandata.find(
-                    f'{NAMESPACE}addToAccessFormats'
+                    f'{self.namespace}addToAccessFormats'
                 ).text.lower()
                 if page_type == 'cover':
                     pass

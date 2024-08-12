@@ -75,7 +75,9 @@ class DaisyBook:
             'html.css',
             'resource.res',
         ]:
-            content_src = pkg_resources.resource_filename('hocr', f'daisy/daisy_files/{content}')
+            content_src = pkg_resources.resource_filename(
+                'hocr', f'daisy/daisy_files/{content}'
+            )
             content_str = open(content_src).read()
             self.add(self.content_dir + content, content_str)
 
