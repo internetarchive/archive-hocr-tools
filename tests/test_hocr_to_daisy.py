@@ -1,7 +1,7 @@
 import pytest
 
-from daisy.book import DaisyBook
-from daisy.util import roman_to_num
+from hocr.daisy.book import DaisyBook
+from hocr.daisy.util import roman_to_num
 
 
 @pytest.mark.parametrize(
