@@ -1,6 +1,5 @@
 from typing import Optional
 
-
 ROMAN_ARABIC_MAP = {
     "I": 1,
     "V": 5,

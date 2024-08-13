@@ -3,9 +3,9 @@
 import argparse
 import os
 import re
-from typing import Dict, List
 import xml.etree.ElementTree as ET
 import zipfile
+from typing import Dict, List
 
 import iso639
 

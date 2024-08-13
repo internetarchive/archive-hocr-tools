@@ -1,15 +1,14 @@
 import os
 import sys
-from typing import Dict, List, Tuple, Union
-import zipfile
 import xml.etree.ElementTree as ET
-from xml.dom import minidom
+import zipfile
 from datetime import datetime
+from typing import Dict, List, Tuple, Union
+from xml.dom import minidom
 
 import pkg_resources
 
 from .util import roman_to_num
-
 
 # This becomes the dtb:generator meta in the generated book
 content_generator = 'Internet Archive - archive.org'
