@@ -3,6 +3,7 @@ import sys
 from typing import Dict, List, Tuple, Union
 import zipfile
 import xml.etree.ElementTree as ET
+from xml.dom import minidom
 from datetime import datetime
 
 import pkg_resources
@@ -385,7 +386,7 @@ def tree_to_str_with_processing(tree: ET.ElementTree, prefix_xml: str) -> str:
         encoding='unicode',
         method='xml',
     )
-    return prefix_xml + xml_str
+    return minidom.parseString(prefix_xml + xml_str).toprettyxml(indent="  ")
 
 
 def make_dtbook(book_id: str, title: str) -> Tuple[ET.ElementTree, ET.Element]:
