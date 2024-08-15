@@ -17,6 +17,7 @@ except:
     scandata_get_skip_pages     = None
     scandata_get_pagetype_pages = None
 
+from internetarchiveocr.language import language_to_alpha3lang
 import iso639
 
 from PIL import Image
@@ -297,7 +298,7 @@ class EpubGenerator(object):
         Attempt to convert a language tag to a valid country code
         """
         try:
-            return iso639.to_iso639_1(language)
+            return iso639.languages.get(part3=language_to_alpha3lang(language)).alpha2
         except:
             return language
 
