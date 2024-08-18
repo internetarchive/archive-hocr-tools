@@ -20,9 +20,6 @@ except:
     scandata_get_skip_pages     = None
     scandata_get_pagetype_pages = None
 
-from internetarchiveocr.language import language_to_alpha3lang
-import iso639
-
 from PIL import Image
 Image.MAX_IMAGE_PIXELS = 933120000
 
@@ -336,15 +333,6 @@ class EpubGenerator(object):
         print("Parsing file %s" % self.hocr_xml_file_path)
         self.generate()
 
-    def normalize_language(self, language):
-        """
-        Attempt to convert a language tag to a valid country code
-        """
-        try:
-            return iso639.languages.get(part3=language_to_alpha3lang(language)).alpha2
-        except:
-            return language
-
     def set_metadata(self):
         """
         Set the metadata on the epub object
@@ -353,10 +341,10 @@ class EpubGenerator(object):
             self.book.set_identifier(self.metadata['identifier'])
         if 'language' in self.metadata.keys():
             if type(self.metadata['language']) is str:
-                self.metadata['language'] = self.normalize_language(self.metadata['language'])
+                self.metadata['language'] = hocr.util.normalize_language(self.metadata['language'])
                 self.book.set_language(self.metadata['language'])
             elif type(self.metadata['language']) is list:
-                self.metadata['language'] = '; '.join(map(self.normalize_language, self.metadata['language']))
+                self.metadata['language'] = '; '.join(map(hocr.util.normalize_language, self.metadata['language']))
                 self.book.set_language(self.metadata['language'])
         if 'title' in self.metadata.keys():
             if isinstance(self.metadata['title'], str):

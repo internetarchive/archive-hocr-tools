@@ -6,10 +6,8 @@ import re
 import xml.etree.ElementTree as ET
 from typing import Dict, List, Optional, OrderedDict
 
-from internetarchiveocr.language import language_to_alpha3lang  # type: ignore[import-untyped]
-import iso639  # type: ignore[import-untyped]
-
 import hocr
+
 from derivermodule.scandata import scandata_parse  # type: ignore[import-untyped]
 from hocr import daisy
 
@@ -73,10 +71,8 @@ class DaisyGenerator:
         result = []
         for el in md:
             if el.tag == 'language' and el.text:
-                lang = language_to_alpha3lang(el.text)
-                if lang is not None:
-                    result_text = iso639.languages.get(part3=lang).alpha2
-                else:
+                result_text = hocr.util.normalize_language(language=el.text)
+                if not result_text:
                     result_text = el.text
             else:
                 result_text = el.text
