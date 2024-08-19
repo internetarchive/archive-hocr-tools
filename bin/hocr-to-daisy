@@ -302,7 +302,9 @@ class DaisyGenerator:
         found_title = False
         for page_scandata in self.get_scandata_pages():  # confirm title exists
             # TODO: handle `None`
-            t = page_scandata.find(f'{self.namespace}pageType').text
+            t = page_scandata.find(f'{self.namespace}pageType')
+            if t is not None:
+                t = t.text
             if t == 'Title' or t == 'Title Page':
                 found_title = True
                 break
@@ -341,8 +343,11 @@ class DaisyGenerator:
                 if not include_page(page_scandata):
                     continue
 
-                # TODO: handle None
-                page_type = page_scandata.find(f'{self.namespace}pageType').text.lower()
+                page_type = page_scandata.find(f'{self.namespace}pageType')
+                if page_type is None:
+                    pass
+                else:
+                    page_type = page_type.text.lower()
                 add_to_access_formats = page_scandata.find(
                     f'{self.namespace}addToAccessFormats'
                 ).text.lower()
