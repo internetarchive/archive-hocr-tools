@@ -4,23 +4,21 @@ import argparse
 import os
 import re
 import xml.etree.ElementTree as ET
-import zipfile
-from typing import Dict, List
+from typing import Dict, List, Optional, OrderedDict
 
 from internetarchiveocr.language import language_to_alpha3lang
 import iso639
 
 import hocr
+from derivermodule.scandata import scandata_parse
 from hocr import daisy
 
 
 class DaisyGenerator:
     __version__ = '1.0.0'
 
-    # TODO fix pathing and other hard-coded values. Look at ebook script.
     toc = None
     metadata = None
-    scandata = None
 
     def __init__(
         self,
@@ -33,14 +31,13 @@ class DaisyGenerator:
         self.ia_item_name = ia_item_name
         self.ia_item_path = ia_item_path
         self.ia_doc_name = ia_doc_name
+        self.scandata = scandata_parse(self.get_scandata_path())
 
-    # TODO: candidate for removal/refactor
     def get_hocr(self):
         if os.path.exists(self.hocr_xml_file_path):
             return open(self.hocr_xml_file_path, 'rb')
         raise FileNotFoundError('No hOCR file found')
 
-    # TODO: candidate for removal/refactor
     def get_scandata_path(self) -> str:
         paths = [
             os.path.join(self.ia_item_path, self.ia_doc_name + '_scandata.xml'),
@@ -50,59 +47,16 @@ class DaisyGenerator:
         for sd_path in paths:
             if os.path.exists(sd_path):
                 return sd_path
-        raise Exception('No scandata found')
-
-    def set_namespace(self) -> None:
-        """
-        Set the namespace, if any, because Python's XML.etree won't work without
-        it, if it is present. But not all scandata files have a namespace
-        specified.
-        """
-        self.namespace = ''
-        root = self.scandata
-        if root.tag.startswith('{'):
-            self.namespace = '{' + root.tag.split('}')[0][1:] + '}'
+        raise FileNotFoundError('No scandata found')
 
     # TODO: candidate for removal/refactor
-    def get_scandata(self) -> ET.Element:
-        if self.scandata is None:
-            scandata_path = self.get_scandata_path()
-            _, ext = os.path.splitext(scandata_path)
+    def get_bookdata(self) -> OrderedDict:
+        """Get the `book` metadata from scandata."""
+        book_data = self.scandata.get("book")
+        if not book_data:
+            raise ValueError("Expected book data")
 
-            if ext.lower() == '.zip':
-                with zipfile.ZipFile(scandata_path, 'r') as z:
-                    scandata_str = z.read('scandata.xml')
-                    self.scandata = ET.fromstring(scandata_str)
-            else:
-                self.scandata = ET.parse(scandata_path).getroot()
-
-            self.set_namespace()
-            pageData = self.scandata.find(f'{self.namespace}pageData')
-            if pageData is not None:
-                self.scandata_pages = pageData.findall(f'{self.namespace}page')
-
-            self.leaves = {
-                int(page.get('leafNum', 0)): page for page in self.scandata_pages
-            }
-        return self.scandata
-
-    # TODO: candidate for removal/refactor
-    def get_scandata_ns(self) -> str:
-        scandata = self.get_scandata()
-        bookData = scandata.find('bookData')
-        if bookData is None:
-            return '{http://archive.org/scribe/xml}'
-        else:
-            return ''
-
-    # TODO: candidate for removal/refactor
-    def get_bookdata(self) -> ET.Element:
-        scandata = self.get_scandata()
-        bookdata = scandata.find(self.get_scandata_ns() + 'bookData')
-        if bookdata is None:
-            raise ValueError('why here?')
-            # bookdata = scandata.bookData
-        return bookdata
+        return book_data
 
     # TODO: candidate for removal/refactor
     def get_metadata(self) -> List[Dict[str, str]]:
@@ -124,7 +78,6 @@ class DaisyGenerator:
         self.metadata = result
         return result
 
-    # TODO: candidate for removal/refactor
     def get_toc(self):
         if self.toc is not None:
             return self.toc
@@ -135,32 +88,27 @@ class DaisyGenerator:
         result = {el.get('page'): el.get('title') for el in toc}
         return result
 
-    # TODO: candidate for removal/refactor
     def has_pagenos(self) -> bool:
-        self.get_scandata()
-        max_page = len(self.scandata_pages) if self.scandata_pages else 0
-        i = 0
-        result = False
-        while i < max_page:
-            page_scandata = self.get_page_scandata(i)
-            pageno = page_scandata.find(self.get_scandata_ns() + 'pageNumber')
-            if pageno is not None:
-                result = True
-                break
-            i += 1
-        return result
+        """Determine whether the book has page numbers."""
+        pages = self.get_scandata_pages()
+        for page in pages:
+            has_pagenumber = page.get("pageNumber")
+            if has_pagenumber is not None:
+                return True
 
-    # TODO: candidate for removal/refactor
-    def get_page_scandata(self, i: int) -> ET.Element:
-        self.get_scandata()
-        if i >= len(self.scandata_pages):
+        return False
+
+    def get_page_scandata(self, page_number: int) -> Optional[OrderedDict]:
+        """Get the scandata for an individual page."""
+        pages = self.get_scandata_pages()
+        if page_number > len(pages):
             return None
-        return self.scandata_pages[int(i)]
+        return pages[int(page_number)]
 
-    # TODO: candidate for removal/refactor
-    def get_scandata_pages(self) -> List[ET.Element]:
-        self.get_scandata()
-        return self.scandata_pages
+    def get_scandata_pages(self) -> List[OrderedDict]:
+        """Return the scandata pages data."""
+        book = self.get_bookdata()
+        return book['pageData']['page']
 
     # TODO: candidate for removal/refactor
     def par_is_pageno_header_footer_hocr(self, par) -> bool:
@@ -221,18 +169,14 @@ class DaisyGenerator:
         return par_text
 
     def process_book_hocr(self, ebook: "daisy.book.DaisyBook", alt_booktext=None):
-        # TODO: maybe ultimately just make the initial DaisyBook here?
-        scandata = self.get_scandata()
         hocr_file = self.get_hocr()
-
-        scandata_ns = self.get_scandata_ns()
-        bookData = self.get_bookdata()
-
         contents = self.get_toc()
         metadata = self.get_metadata()
+
         title = daisy.book.get_metadata_tag_data(metadata, 'title')
         if title is None:
             title = ''
+
         author = daisy.book.get_metadata_tag_data(metadata, 'creator')
         if author is None:
             author = ''
@@ -299,15 +243,7 @@ class DaisyGenerator:
 
         hocr_iterator = hocr.parse.hocr_page_iterator(hocr_file)
 
-        found_title = False
-        for page_scandata in self.get_scandata_pages():  # confirm title exists
-            # TODO: handle `None`
-            t = page_scandata.find(f'{self.namespace}pageType').text
-            if t == 'Title' or t == 'Title Page':
-                found_title = True
-                break
-        # True if no title found, else False now, True later.
-        before_title_page = found_title
+        before_title_page = True
         for i, page in enumerate(hocr_iterator):
             # wrap in try/finally to ensure page.clear() is called
             try:
@@ -318,79 +254,51 @@ class DaisyGenerator:
                 page_scandata = self.get_page_scandata(i)
                 pageno = None
                 if page_scandata is not None:
-                    pageno = page_scandata.find(scandata_ns + 'pageNumber')
-                    if pageno is not None:
-                        pageno = pageno.text
+                    pageno = page_scandata.get('pageNumber')
                 if pageno is not None:
                     if contents is not None and pageno in contents:
                         if pushed_navpoint:
                             ebook.pop_navpoint()
                         ebook.push_navpoint('level', 'h', contents[pageno])
                         pushed_navpoint = True
-                    part_str = 'part' + str(part_number).zfill(4)
                     ebook.add_pagetarget(pageno, pageno)
 
-                def include_page(page_scandata):
-                    if page_scandata is None:
-                        return False
-                    add = page_scandata.find(scandata_ns + 'addToAccessFormats')
-                    if add is None:
-                        add = page_scandata.addToAccessFormats
-                    return bool(add is not None and add.text == 'true')
-
-                if not include_page(page_scandata):
+                if not page_scandata:
                     continue
 
-                # TODO: handle None
-                page_type = page_scandata.find(f'{self.namespace}pageType').text.lower()
-                add_to_access_formats = page_scandata.find(
-                    f'{self.namespace}addToAccessFormats'
-                ).text.lower()
-                if page_type == 'cover':
-                    pass
-
-                elif page_type == 'title' or page_type == 'title page':
+                if page_scandata.get('pageType', '').lower() in ('title', 'title page'):
                     before_title_page = False
-                    pass
 
-                elif page_type == 'copyright':
-                    pass
+                if page_scandata.get('addToAccessFormats') == 'false':
+                    continue
 
-                elif page_type == 'contents':
-                    pass
+                if before_title_page:
+                    continue
 
-                elif page_type == 'normal' or add_to_access_formats == 'true':
-                    # Treat pages with unrecognized pageType and add_to_access_formats=true as Normal
-                    if before_title_page:
-                        # XXX consider skipping if blank + no words?
-                        # make page image
-                        # (id, filename) = make_html_page_image(i, iabook, ebook)
-                        pass
-                    else:
-                        first_par = True
-                        saw_pageno_header_footer = False
+                first_par = True
+                saw_pageno_header_footer = False
 
-                        pars = list(hocr.parse.hocr_page_to_word_data(page))
+                pars = list(hocr.parse.hocr_page_to_word_data(page))
 
-                        for paridx, par in enumerate(pars):
-                            # First paragraph
-                            if first_par and self.par_is_pageno_header_footer_hocr(par):
-                                saw_pageno_header_footer = True
-                                first_par = False
-                                continue
-                            first_par = False
+                for paridx, par in enumerate(pars):
+                    # First paragraph
+                    if first_par and self.par_is_pageno_header_footer_hocr(par):
+                        saw_pageno_header_footer = True
+                        first_par = False
+                        continue
+                    first_par = False
 
-                            # Last paragraph
-                            if (
-                                not saw_pageno_header_footer
-                                and paridx == len(pars) - 1
-                                and self.par_is_pageno_header_footer_hocr(par)
-                            ):
-                                saw_pageno_header_footer = True
-                                continue
+                    # Last paragraph
+                    if (
+                        not saw_pageno_header_footer
+                        and paridx == len(pars) - 1
+                        and self.par_is_pageno_header_footer_hocr(par)
+                    ):
+                        saw_pageno_header_footer = True
+                        continue
 
-                            par_text = self.our_hocr_paragraph_text(par)
-                            ebook.add_tag('p', par_text)
+                    par_text = self.our_hocr_paragraph_text(par)
+                    ebook.add_tag('p', par_text)
             finally:
                 pass
 
@@ -406,12 +314,6 @@ class DaisyGenerator:
         ebook.add_tag('p', 'End of book')
         ebook.pop_tag()
         ebook.pop_tag()
-
-    def generate(self):
-        """
-        TODO:
-            Maybe this can more or less run process_book_hocr() from www/daisy.
-        """
 
 
 if __name__ == '__main__':
