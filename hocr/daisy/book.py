@@ -206,10 +206,7 @@ class DaisyBook:
         elif roman_to_num(value):
             int_value = roman_to_num(value)
         else:
-            error_text = (
-                "Got non-Arabic, non-Roman numeral, or negative pagetarget value"
-            )
-            raise ValueError(error_text)
+            return
 
         if int_value > self.max_page_number:
             self.max_page_number = int_value
