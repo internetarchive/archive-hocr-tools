@@ -6,11 +6,11 @@ import re
 import xml.etree.ElementTree as ET
 from typing import Dict, List, Optional, OrderedDict
 
-from internetarchiveocr.language import language_to_alpha3lang
-import iso639
+from internetarchiveocr.language import language_to_alpha3lang  # type: ignore[import-untyped]
+import iso639  # type: ignore[import-untyped]
 
 import hocr
-from derivermodule.scandata import scandata_parse
+from derivermodule.scandata import scandata_parse  # type: ignore[import-untyped]
 from hocr import daisy
 
 
@@ -23,31 +23,40 @@ class DaisyGenerator:
     def __init__(
         self,
         hocr_xml_file_path: str,
-        ia_item_name: str = "",
-        ia_item_path: str = "",
-        ia_doc_name: str = "",
+        metadata_xml_file_path: Optional[str] = None,
+        scandata_xml_file_path: Optional[str] = None,
+        toc_xml_file_path: Optional[str] = None,
     ) -> None:
         self.hocr_xml_file_path = hocr_xml_file_path
-        self.ia_item_name = ia_item_name
-        self.ia_item_path = ia_item_path
-        self.ia_doc_name = ia_doc_name
-        self.scandata = scandata_parse(self.get_scandata_path())
+        self.metadata_xml_file_path = metadata_xml_file_path
+        self.scandata = (
+            scandata_parse(scandata_xml_file_path) if scandata_xml_file_path else None
+        )
+        self.toc_xml_file_path = toc_xml_file_path
+
+        # TODO: use derivermodule metadata parsing; return rather than set in the process function.
+        if self.metadata_xml_file_path and os.path.exists(self.metadata_xml_file_path):
+            self.process_metadata(self.metadata_xml_file_path)
+
+        processed_metadata = (
+            self.process_metadata(metadata_file_path=args.metafile)
+            if args.metafile
+            else None
+        )
+
+        # Create a DAISY book with which to work.
+        self.daisy_book = daisy.book.DaisyBook(
+            out_name=args.outfile, metadata=processed_metadata
+        )
+        # Fill in the metadata and hOCR content.
+        self.generate(daisy_book=self.daisy_book)
+        # Create the supporting files (ncx, smil, etc.)
+        self.daisy_book.finish(processed_metadata)
 
     def get_hocr(self):
         if os.path.exists(self.hocr_xml_file_path):
             return open(self.hocr_xml_file_path, 'rb')
         raise FileNotFoundError('No hOCR file found')
-
-    def get_scandata_path(self) -> str:
-        paths = [
-            os.path.join(self.ia_item_path, self.ia_doc_name + '_scandata.xml'),
-            os.path.join(self.ia_item_path, 'scandata.xml'),
-            os.path.join(self.ia_item_path, 'scandata.zip'),
-        ]
-        for sd_path in paths:
-            if os.path.exists(sd_path):
-                return sd_path
-        raise FileNotFoundError('No scandata found')
 
     # TODO: candidate for removal/refactor
     def get_bookdata(self) -> OrderedDict:
@@ -59,11 +68,8 @@ class DaisyGenerator:
         return book_data
 
     # TODO: candidate for removal/refactor
-    def get_metadata(self) -> List[Dict[str, str]]:
-        if self.metadata:
-            return self.metadata
-        md_path = os.path.join(self.ia_item_path, self.ia_item_name + '_meta.xml')
-        md = ET.parse(md_path).getroot()
+    def process_metadata(self, metadata_file_path: str) -> List[Dict[str, str]]:
+        md = ET.parse(metadata_file_path).getroot()
         result = []
         for el in md:
             if el.tag == 'language' and el.text:
@@ -78,13 +84,14 @@ class DaisyGenerator:
         self.metadata = result
         return result
 
-    def get_toc(self):
+    def get_toc(self) -> Optional[Dict]:
+        if self.toc_xml_file_path is None:
+            return None
         if self.toc is not None:
             return self.toc
-        toc_path = os.path.join(self.ia_item_path, self.ia_doc_name + '_toc.xml')
-        if not os.path.exists(toc_path):
+        if not os.path.exists(self.toc_xml_file_path):
             return None
-        toc = ET.parse(toc_path).getroot()
+        toc = ET.parse(self.toc_xml_file_path).getroot()
         result = {el.get('page'): el.get('title') for el in toc}
         return result
 
@@ -100,6 +107,9 @@ class DaisyGenerator:
 
     def get_page_scandata(self, page_number: int) -> Optional[OrderedDict]:
         """Get the scandata for an individual page."""
+        if not self.scandata:
+            return None
+
         pages = self.get_scandata_pages()
         if page_number > len(pages):
             return None
@@ -140,7 +150,6 @@ class DaisyGenerator:
 
     # TODO: candidate for removal/refactor
     def our_hocr_paragraph_text(self, paragraph):
-        word_confidences = []
         par_text = ''
 
         for line in paragraph['lines']:
@@ -156,7 +165,6 @@ class DaisyGenerator:
 
             # Encode
             line_words = line_words.encode('utf-8')
-            # line_words = line_words.strip().encode('utf-8')
 
             # Write out
             if line_words:
@@ -168,26 +176,38 @@ class DaisyGenerator:
 
         return par_text
 
-    def process_book_hocr(self, ebook: "daisy.book.DaisyBook", alt_booktext=None):
+    def generate(self, daisy_book: "daisy.book.DaisyBook", alt_booktext=None):
+        """
+        Take a DaisyBook and fill it out data from the hOCR file, scandata,
+        and metadata, if available. Also add frontmatter and rearmatter.
+        """
         hocr_file = self.get_hocr()
-        contents = self.get_toc()
-        metadata = self.get_metadata()
+        contents = self.get_toc() if self.toc_xml_file_path is not None else None
+        metadata = (
+            self.process_metadata(self.metadata_xml_file_path)
+            if self.metadata_xml_file_path
+            else None
+        )
 
-        title = daisy.book.get_metadata_tag_data(metadata, 'title')
+        title = (
+            daisy.book.get_metadata_tag_data(metadata, 'title') if metadata else None
+        )
         if title is None:
             title = ''
 
-        author = daisy.book.get_metadata_tag_data(metadata, 'creator')
+        author = (
+            daisy.book.get_metadata_tag_data(metadata, 'creator') if metadata else None
+        )
         if author is None:
             author = ''
 
-        ebook.push_tag('frontmatter')
-        ebook.add_tag('doctitle', title)
-        ebook.add_tag('docauthor', author)
+        daisy_book.push_tag('frontmatter')
+        daisy_book.add_tag('doctitle', title)
+        daisy_book.add_tag('docauthor', author)
 
-        ebook.push_navpoint('level', 'h', 'Producer\'s Note')
-        ebook.push_navpoint('level', 'h', 'About Internet Archive Daisy Books')
-        ebook.add_tag(
+        daisy_book.push_navpoint('level', 'h', 'Producer\'s Note')
+        daisy_book.push_navpoint('level', 'h', 'About Internet Archive Daisy Books')
+        daisy_book.add_tag(
             'p',
             """This book was produced in DAISY format by the Internet Archive.  The
         book pages were scanned and converted to DAISY format
@@ -200,22 +220,22 @@ class DaisyGenerator:
         that this book will be useful to you.
         """,
         )
-        ebook.pop_navpoint()
-        ebook.push_navpoint('level', 'h', 'About this DAISY book')
+        daisy_book.pop_navpoint()
+        daisy_book.push_navpoint('level', 'h', 'About this DAISY book')
         has_nav = False
-        if self.has_pagenos():
+        if self.scandata and self.has_pagenos():
             has_nav = True
-            ebook.add_tag('p', "This book has page navigation.")
+            daisy_book.add_tag('p', "This book has page navigation.")
         if contents is not None:
             has_nav = True
-            ebook.add_tag('p', "This book has chapter navigation.")
+            daisy_book.add_tag('p', "This book has chapter navigation.")
         if not has_nav:
-            ebook.add_tag(
+            daisy_book.add_tag(
                 'p', "This book as paragraph navigation, but is otherwise unstructured."
             )
-        ebook.pop_navpoint()
-        ebook.push_navpoint('level', 'h', 'About the Internet Archive')
-        ebook.add_tag(
+        daisy_book.pop_navpoint()
+        daisy_book.push_navpoint('level', 'h', 'About the Internet Archive')
+        daisy_book.add_tag(
             'p',
             """The Internet Archive was founded in 1996
         to build an Internet library
@@ -228,27 +248,25 @@ class DaisyGenerator:
     for the blind and other persons with disabilities.
         """,
         )
-        ebook.pop_navpoint()
-        ebook.pop_navpoint()
+        daisy_book.pop_navpoint()
+        daisy_book.pop_navpoint()
 
-        ebook.pop_tag()
-        ebook.push_tag('bodymatter')
+        daisy_book.pop_tag()
+        daisy_book.push_tag('bodymatter')
 
         if contents is None:
-            ebook.push_navpoint('level', 'h', 'Book')
+            daisy_book.push_navpoint('level', 'h', 'Book')
 
-        part_number = 0
-        cover_number = 0
         pushed_navpoint = False
 
         hocr_iterator = hocr.parse.hocr_page_iterator(hocr_file)
 
-        before_title_page = True
+        before_title_page = True if self.scandata else False
         for i, page in enumerate(hocr_iterator):
             # wrap in try/finally to ensure page.clear() is called
             try:
                 if alt_booktext is not None:
-                    ebook.add_tag('p', alt_booktext)
+                    daisy_book.add_tag('p', alt_booktext)
                     break
 
                 page_scandata = self.get_page_scandata(i)
@@ -258,18 +276,18 @@ class DaisyGenerator:
                 if pageno is not None:
                     if contents is not None and pageno in contents:
                         if pushed_navpoint:
-                            ebook.pop_navpoint()
-                        ebook.push_navpoint('level', 'h', contents[pageno])
+                            daisy_book.pop_navpoint()
+                        daisy_book.push_navpoint('level', 'h', contents[pageno])
                         pushed_navpoint = True
-                    ebook.add_pagetarget(pageno, pageno)
+                    daisy_book.add_pagetarget(pageno, pageno)
 
-                if not page_scandata:
-                    continue
-
-                if page_scandata.get('pageType', '').lower() in ('title', 'title page'):
+                if page_scandata and page_scandata.get('pageType', '').lower() in (
+                    'title',
+                    'title page',
+                ):
                     before_title_page = False
 
-                if page_scandata.get('addToAccessFormats') == 'false':
+                if page_scandata and page_scandata.get('addToAccessFormats') == 'false':
                     continue
 
                 if before_title_page:
@@ -298,22 +316,22 @@ class DaisyGenerator:
                         continue
 
                     par_text = self.our_hocr_paragraph_text(par)
-                    ebook.add_tag('p', par_text)
+                    daisy_book.add_tag('p', par_text)
             finally:
                 pass
 
         if pushed_navpoint:
-            ebook.pop_navpoint()
+            daisy_book.pop_navpoint()
 
         if contents is None:
-            ebook.pop_navpoint()  # level1
+            daisy_book.pop_navpoint()  # level1
 
-        ebook.pop_tag()
-        ebook.push_tag('rearmatter')
-        ebook.push_tag('level1')
-        ebook.add_tag('p', 'End of book')
-        ebook.pop_tag()
-        ebook.pop_tag()
+        daisy_book.pop_tag()
+        daisy_book.push_tag('rearmatter')
+        daisy_book.push_tag('level1')
+        daisy_book.add_tag('p', 'End of book')
+        daisy_book.pop_tag()
+        daisy_book.pop_tag()
 
 
 if __name__ == '__main__':
@@ -326,24 +344,20 @@ if __name__ == '__main__':
         '-o', '--outfile', help='Output DAISY zip', type=str, default=None
     )
     parser.add_argument(
+        '-m', '--metafile', help='Item _meta.xml file', type=str, default=None
+    )
+    parser.add_argument(
+        '-s', '--scandata', help='Item _scandata.xml file', type=str, default=None
+    )
+    parser.add_argument(
+        '-t', '--toc', help='Item _toc.xml file', type=str, default=None
+    )
+    parser.add_argument(
         '-w',
         '--workingdir',
         help='Directory used for temp files',
         type=str,
         default=None,
-    )
-    parser.add_argument(
-        '-i',
-        '--itemdir',
-        help='Directory of the Internet Archive item',
-        type=str,
-        default=None,
-    )
-    parser.add_argument(
-        '-n', '--itemname', help='Internet Archive item name', type=str, default=None
-    )
-    parser.add_argument(
-        '-d', '--docname', help='Internet Archive document name', type=str, default=None
     )
 
     args = parser.parse_args()
@@ -355,16 +369,9 @@ if __name__ == '__main__':
     if args.workingdir:
         WORKING_DIR = args.workingdir
 
-    # The relation of these will need to be rethought.
-    # TODO: should be args.infile
     dg = DaisyGenerator(
         hocr_xml_file_path=args.infile,
-        ia_item_name=args.itemname,
-        ia_item_path=args.itemdir,
-        ia_doc_name=args.docname,
+        metadata_xml_file_path=args.metafile,
+        scandata_xml_file_path=args.scandata,
+        toc_xml_file_path=args.toc,
     )
-    metadata = dg.get_metadata()
-
-    daisy_book = daisy.book.DaisyBook(out_name=args.outfile, metadata=metadata)
-    dg.process_book_hocr(ebook=daisy_book)
-    daisy_book.finish(metadata)

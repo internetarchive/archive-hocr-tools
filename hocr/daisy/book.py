@@ -1,9 +1,8 @@
-import os
 import sys
 import xml.etree.ElementTree as ET
 import zipfile
 from datetime import datetime
-from typing import Dict, List, Tuple, Union
+from typing import Dict, List, Optional, Tuple, Union
 from xml.dom import minidom
 
 import pkg_resources
@@ -33,15 +32,15 @@ class DaisyBook:
     def __init__(
         self,
         out_name: str,
-        metadata: List[Dict[str, str]],
+        metadata: Optional[List[Dict[str, str]]] = None,
         content_dir: str = '',
     ) -> None:
         self.dt = datetime.now()
         self.z = zipfile.ZipFile(out_name, 'w')
         self.content_dir = content_dir
-        self.book_id = get_metadata_tag_data(metadata, 'identifier')
-        self.title = get_metadata_tag_data(metadata, 'title')
-        self.author = get_metadata_tag_data(metadata, 'creator')
+        self.book_id = get_metadata_tag_data(metadata, 'identifier') if metadata else ""
+        self.title = get_metadata_tag_data(metadata, 'title') if metadata else ""
+        self.author = get_metadata_tag_data(metadata, 'creator') if metadata else ""
         self.nav_number = 1
 
         self.opf_file = self.book_id + '_daisy.opf'
@@ -257,8 +256,8 @@ class DaisyBook:
         )
         self.z.writestr(info, content_str)
 
-    # TODO: better handle the XML post-processing.
-    def finish(self, metadata: List[Dict[str, str]]) -> None:
+    def finish(self, metadata: Optional[List[Dict[str, str]]]) -> None:
+        """Do the best we can to create the opf, ncx, dtbook, smil, etc., even if metadata is None."""
         root = "<?xml version='1.0' encoding='utf-8'?>\n"
 
         prefix_xml = (
@@ -304,8 +303,13 @@ dcb = '{' + dc + '}'
 
 
 def make_opf(
-    metadata: List[Dict[str, str]], manifest_items: List[Dict[str, str]]
+    metadata: Optional[List[Dict[str, str]]], manifest_items: List[Dict[str, str]]
 ) -> str:
+    # If no metadata is provided, just create a skeleton file.
+    # Note: it may be possible to get the title from the XML.
+    if not metadata:
+        metadata = [{}]
+
     root_el = ET.Element(
         'package',
         {
@@ -328,7 +332,7 @@ def make_opf(
     el.text = 'ANSI/NISO Z39.86-2005'
 
     for md in metadata:
-        tagname = md['tag']
+        tagname = md.get('tag')
         if tagname not in [
             'title',
             'creator',
