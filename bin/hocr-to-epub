@@ -2,6 +2,7 @@
 
 import argparse
 from collections import OrderedDict
+from typing import List, Optional
 
 import hocr.parse
 import hocr.util
@@ -29,6 +30,10 @@ import os
 import shutil
 import subprocess
 
+KAKADU_ERRORS = [
+    'Cannot write output with sample precision in excess of 32 bits per sample',
+    'Unable to find the compositing layer identified',
+]
 OCR_SYSTEM_TESSERACT = 'Tesseract'
 OCR_SYSTEM_ABBYY = 'ABBYY'
 OCR_SYSTEM_UNKNOWN = 'Unknown'
@@ -38,17 +43,38 @@ if os.path.exists('/var/tmp/fast'):
 else:
     WORKING_DIR = '/tmp/'
 
+
+def image_has_non_fatal_kakadu_errors(
+        kakadu_error: str, known_kakadu_errors: List[str]
+    ) -> bool:
+    """
+    Returns True if the Kakadu error should not be fatal to the overall conversion.
+
+    Certain `.jp2` files are corrupt in various ways, and understandably Kakadu
+    cannot process them. Indeed, in BookReader they will also not display.
+    See, e.g., https://archive.org/details/cu31924003577214/page/n11/mode/2up.
+
+    However, we can salvage the other pages and continue.
+    """
+    return any(error for error in known_kakadu_errors if error in kakadu_error)
+
+
 class ImageStack(object):
     filenames = []
     images_per_page = {}
     temp_files = []
-    def __init__(self, image_archive_file_path, output_basename, use_kakadu=False):
+    def __init__(self,
+                 image_archive_file_path: str,
+                 output_basename: str,
+                 use_kakadu: bool = False,
+                 ignore_broken_images: bool = False):
         self.output_basename = output_basename
         self.image_archive_file_path = image_archive_file_path
         self.is_zip = self.image_archive_file_path.endswith('.zip')
         self.tempdir_zip   = os.path.join(WORKING_DIR, 'kakadu_input')
         self.tempfile_jp2  = os.path.join(WORKING_DIR, 'temp.jp2')
         self.use_kakadu = use_kakadu
+        self.ignore_broken_images = ignore_broken_images
         self.parse_stack()
 
     def parse_stack(self):
@@ -108,14 +134,19 @@ class ImageStack(object):
                     '-i', self.tempfile_jp2,
                     '-o', tempfile_tiff
                 ]
-                try:
-                    subprocess.run(
-                        cmd, stdout=subprocess.DEVNULL, check=True
-                    )
-                except subprocess.CalledProcessError as e:
+
+                result = subprocess.run(
+                    cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True
+                )
+
+                if self.ignore_broken_images and result.stderr and image_has_non_fatal_kakadu_errors(result.stderr, KAKADU_ERRORS):
+                    print(f'Error in image stack for {extracted_file_path}: {result.stderr}')
+                    return
+                elif result.returncode != 0:
                     raise RuntimeError(
-                        "Can't convert JP2 to TIFF: {}".format(e)
+                        f"Can't convert JP2 to TIFF: {result.stderr}"
                     )
+
             else:
                 i = Image.open(extracted_file_path)
                 i.save(tempfile_tiff, compression=None)
@@ -233,12 +264,13 @@ class EpubGenerator(object):
     strip_whitespaces = True
 
     def __init__(self,
-                 hocr_xml_file_path,
-                 meta_xml_file_path=None,
-                 image_stack_zip_file_path=None,
-                 scandata_xml_file_path=None,
-                 epub_zip_file_path=None,
-                 use_kakadu=False):
+                 hocr_xml_file_path: str,
+                 meta_xml_file_path: Optional[str] = None,
+                 image_stack_zip_file_path: Optional[str] = None,
+                 scandata_xml_file_path: Optional[str] = None,
+                 epub_zip_file_path: Optional[str] = None,
+                 use_kakadu: bool = False,
+                 ignore_broken_images: bool = False):
 
         # Copy arguments to locals
         self.hocr_xml_file_path = hocr_xml_file_path
@@ -265,7 +297,11 @@ class EpubGenerator(object):
             self.metadata = {}
         # Try to find jp2.zip
         if os.path.exists(self.image_stack_zip_file_path):
-            self.img_stack = ImageStack(self.image_stack_zip_file_path, os.path.join(WORKING_DIR, "epub_img"), use_kakadu=use_kakadu)
+            self.img_stack = ImageStack(
+                    self.image_stack_zip_file_path,
+                    os.path.join(WORKING_DIR,"epub_img"),
+                    use_kakadu=use_kakadu,
+                    ignore_broken_images=ignore_broken_images)
         else:
             self.img_stack = None
         # Try to find scandata
@@ -600,6 +636,8 @@ class EpubGenerator(object):
                 # Treat first cover image as special case
                 if page_idx not in self.cover_pages[:1]:
                     cropped_image_filename = self.img_stack.crop_image(page_idx, box)
+                    if not cropped_image_filename:
+                        continue
                     cropped_jpeg_data = open(cropped_image_filename, "rb").read()
                     image_filename_epub = "image_%04u_%02u.jpeg" % (page_idx, image_idx)
                     image_epub = epub.EpubImage()
@@ -672,6 +710,8 @@ if __name__ == '__main__':
     parser.add_argument('-w', '--workingdir', help='Directory used for temp files',
                         type=str, default=None)
     parser.add_argument('--kakadu', help='Use kakadu is available', action='store_true')
+    parser.add_argument('--ignore-broken-images', help='Continue even if kakadu cannot use an image',
+                        action='store_true')
     args = parser.parse_args()
 
     if not args.infile:
@@ -681,4 +721,11 @@ if __name__ == '__main__':
     if args.workingdir:
         WORKING_DIR = args.workingdir
 
-    EpubGenerator(args.infile, args.metafile, args.imagestack, args.scandata, args.outfile, use_kakadu=args.kakadu)
+    EpubGenerator(
+        args.infile,
+        args.metafile,
+        args.imagestack,
+        args.scandata,
+        args.outfile,
+        use_kakadu=args.kakadu,
+        ignore_broken_images=args.ignore_broken_images)
