@@ -3,6 +3,8 @@ import io
 
 from xml.etree import ElementTree
 
+from PIL import Image, ImageChops
+
 #: Contains the HOCR schema
 HOCR_SCHEMA = '{http://www.w3.org/1999/xhtml}'
 
@@ -130,3 +132,24 @@ def get_header_footer(fd):
 
     return header.encode('utf-8'), footer.encode('utf-8')
 
+
+def needs_grayscale_conversion(image: Image.Image) -> bool:
+    """
+    Return True if image should be converted to grayscale, and False otherwise.
+    Grayscale images with alpha layers need conversion because the JPEG target
+    doesn't support transparency.
+
+    Note: this will return False for RGB images that are functionally grayscale,
+    as the cost of identifying them is not worth the effort. For a good, yet
+    still too slow strategy, see https://stackoverflow.com/a/34175631.
+    """
+    return image.mode in ('LA', '1')
+
+
+def needs_rgb_conversion(image: Image.Image) -> bool:
+    """
+    Return True if image should be converted to RGB, and False otherwise.
+
+    Anything that isn't a grayscale image that also isn't already RGB needs conversion.
+    """
+    return image.mode not in ('RGB', 'L', 'LA', '1')
