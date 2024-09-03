@@ -3,6 +3,8 @@
 import argparse
 from collections import OrderedDict
 
+# from PIL.ImageFile import ImageFile
+
 import hocr.parse
 import hocr.util
 from ebooklib import epub, ITEM_COVER
@@ -129,6 +131,11 @@ class ImageStack(object):
 
         #fh = self.zf.open(self.filenames[page])
         img = Image.open(tempfile_tiff)
+        if hocr.util.needs_grayscale_conversion(image=img):
+            img = img.convert('L')
+        elif hocr.util.needs_rgb_conversion(image=img):
+            img = img.convert('RGB')
+
         #img = Image.open(fh)
         if box:
             region = img.crop(box)
