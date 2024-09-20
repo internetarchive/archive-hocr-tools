@@ -6,9 +6,10 @@ import re
 import xml.etree.ElementTree as ET
 from typing import Dict, List, Optional, OrderedDict
 
-import hocr
+from derivermodule.scandata import \
+    scandata_parse  # type: ignore[import-untyped]
 
-from derivermodule.scandata import scandata_parse  # type: ignore[import-untyped]
+import hocr
 from hocr import daisy
 
 
