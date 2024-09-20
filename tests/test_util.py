@@ -1,8 +1,8 @@
-from typing import Tuple
-from PIL import Image
 import pytest
+from PIL import Image
 
-from hocr.util import needs_grayscale_conversion, needs_rgb_conversion
+from hocr.util import (needs_grayscale_conversion, needs_rgb_conversion,
+                       normalize_language)
 
 
 def create_image(mode: str, size: tuple = (10, 10)) -> Image.Image:
@@ -56,3 +56,24 @@ def test_needs_grayscale_conversion(mode: str, expected: bool) -> None:
 def test_needs_rgb_conversion(mode: str, expected: bool) -> None:
     image = create_image(mode)
     assert needs_rgb_conversion(image) is expected
+
+
+@pytest.mark.parametrize(
+    ("language", "expected"),
+    [
+        ("fra", "fr"),
+        # See, e.g. https://archive.org/metadata/101610331.nlm.nih.gov/metadata/language
+        ("fre", "fr"),
+        # See, e.g. https://archive.org/metadata/2e013a64-935f-4be4-9c51-3eac22929627/metadata/language
+        ("FRE", "fr"),
+        # See, e.g. https://archive.org/metadata/4E2218INV1398RES_P11BIS/metadata/language
+        ("French", "fr"),
+        ("eNg", "en"),
+        ("brewer", "brewer"),
+        (None, None),
+        ("", None),
+    ],
+)
+def test_normalize_language(language: str, expected: str) -> None:
+    got = normalize_language(language=language)
+    assert got == expected
