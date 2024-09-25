@@ -395,6 +395,8 @@ def make_dtbook(book_id: str, title: str) -> Tuple[ET.ElementTree, ET.Element]:
         {'xmlns': 'http://www.daisy.org/z3986/2005/dtbook/', 'version': '2005-3'},
     )
 
+    title = title if title else book_id
+
     head_el = ET.SubElement(root_el, 'head')
     ET.SubElement(head_el, 'meta', {'name': 'dtb:uid', 'content': book_id})
     ET.SubElement(head_el, 'meta', {'name': 'dc:Title', 'content': title})
