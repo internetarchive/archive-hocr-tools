@@ -695,6 +695,7 @@ class EpubGenerator(object):
 
         # We don't have enough information to create TOC/chapters/sections yet
         #book.toc = pages_epub
+        self.book.toc = (front_matter_epub,)
         self.book.add_item(epub.EpubNcx())
         self.book.add_item(epub.EpubNav())
         if len(self.cover_pages):
