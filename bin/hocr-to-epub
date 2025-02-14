@@ -6,6 +6,8 @@ import shutil
 import subprocess
 import tarfile
 import zipfile
+import html
+
 from collections import OrderedDict
 from typing import List, Optional
 
@@ -540,7 +542,7 @@ class EpubGenerator(object):
         )
         self.book.add_item(css_file)
 
-        front_matter_epub = epub.EpubHtml(title='Notice', file_name='notice.html', lang='en')
+        front_matter_epub = epub.EpubHtml(title='Notice', file_name='notice.html', lang='en', media_type='application/xhtml+xml')
         front_matter_epub.set_content(self.front_matter)
 
         ocr_system = None
@@ -593,6 +595,7 @@ class EpubGenerator(object):
                     for word in line['words']:
                         # Save text data
                         text = word['text']
+                        text = html.escape(text)
                         if self.strip_whitespaces:
                             text = text.strip()
                         line_content.append(text)
@@ -650,6 +653,7 @@ class EpubGenerator(object):
             if words_on_page or images_on_page:
                 page_epub = epub.EpubHtml(title='Page %s' % page_idx,
                                           file_name='page_%s.html' % page_idx,
+                                          media_type='application/xhtml+xml',
                                           )
                 if 'language' in self.metadata.keys():
                     page_epub.set_language(self.metadata['language'])
@@ -682,6 +686,7 @@ class EpubGenerator(object):
 
         # We don't have enough information to create TOC/chapters/sections yet
         #book.toc = pages_epub
+        self.book.toc = (front_matter_epub,)
         self.book.add_item(epub.EpubNcx())
         self.book.add_item(epub.EpubNav())
         if len(self.cover_pages):
