@@ -107,12 +107,12 @@ SEED = 42
 
 COMPOSITE_ANY_RE = re.compile(r'.*\d.*')
 COMPOSITE_DIGIT_SUB = re.compile(r'\d+')
-COMPOSITE_DIGIT_RE = re.compile('\d+')
-COMPOSITE_SIMPLE_RES = [re.compile('^\(\d+\)$'),
-                        re.compile('^[A-Z]+-?\d+$'), re.compile('^\d+-?[A-Z]+$'),
-                        re.compile('^\(\d+\)\(\d+\)$'), re.compile('^\(\d+\)\d+$'),
-                        re.compile('^\d+/\d+$'), re.compile('^\d+\.\d+$'),
-                        re.compile('^\d+\-\d+$')]
+COMPOSITE_DIGIT_RE = re.compile(r'\d{1,8}')
+COMPOSITE_SIMPLE_RES = [re.compile(r'^\(\d{1,8}\)$'),
+                        re.compile(r'^[A-Z]+-?\d{1,8}$'), re.compile(r'^\d{1,8}-?[A-Z]+$'),
+                        re.compile(r'^\(\d{1,8}\)\(\d{1,8}\)$'), re.compile(r'^\(\d{1,8}\)\d{1,8}$'),
+                        re.compile(r'^\d{1,8}/\d{1,8}$'), re.compile(r'^\d{1,8}\.\d{1,8}$'),
+                        re.compile(r'^\d{1,8}\-\d{1,8}$')]
 
 TRELLIS_NONE_COST = 2. # To 'None' nodes
 
