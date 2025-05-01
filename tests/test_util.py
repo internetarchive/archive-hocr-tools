@@ -1,7 +1,7 @@
 import pytest
 from PIL import Image
 
-from hocr.util import (needs_grayscale_conversion, needs_rgb_conversion,
+from hocr.extutil import (needs_grayscale_conversion, needs_rgb_conversion,
                        normalize_language)
 
 

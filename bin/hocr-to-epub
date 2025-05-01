@@ -163,9 +163,9 @@ class ImageStack(object):
 
         #fh = self.zf.open(self.filenames[page])
         img = Image.open(tempfile_tiff)
-        if hocr.util.needs_grayscale_conversion(image=img):
+        if hocr.extutil.needs_grayscale_conversion(image=img):
             img = img.convert('L')
-        elif hocr.util.needs_rgb_conversion(image=img):
+        elif hocr.extutil.needs_rgb_conversion(image=img):
             img = img.convert('RGB')
 
         #img = Image.open(fh)
@@ -345,10 +345,10 @@ class EpubGenerator(object):
             self.book.set_identifier(self.metadata['identifier'])
         if 'language' in self.metadata.keys():
             if type(self.metadata['language']) is str:
-                self.metadata['language'] = hocr.util.normalize_language(self.metadata['language'])
+                self.metadata['language'] = hocr.extutil.normalize_language(self.metadata['language'])
                 self.book.set_language(self.metadata['language'])
             elif type(self.metadata['language']) is list:
-                self.metadata['language'] = '; '.join(map(hocr.util.normalize_language, self.metadata['language']))
+                self.metadata['language'] = '; '.join(map(hocr.extutil.normalize_language, self.metadata['language']))
                 self.book.set_language(self.metadata['language'])
         if 'title' in self.metadata.keys():
             if isinstance(self.metadata['title'], str):

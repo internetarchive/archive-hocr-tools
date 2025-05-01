@@ -72,7 +72,7 @@ class DaisyGenerator:
         result = []
         for el in md:
             if el.tag == 'language' and el.text:
-                result_text = hocr.util.normalize_language(language=el.text)
+                result_text = hocr.extutil.normalize_language(language=el.text)
                 if not result_text:
                     result_text = el.text
             else:

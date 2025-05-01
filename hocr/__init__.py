@@ -1,2 +1,2 @@
-from . import parse, text, util, searching, fts
+from . import parse, text, util, searching, fts, extutil
 from .version import __version__
