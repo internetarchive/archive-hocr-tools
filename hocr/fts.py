@@ -22,63 +22,40 @@ FINAL_PRE_TAG = '{{{'
 FINAL_POST_TAG = '}}}'
 
 def match_words(hocr_words, match_indexes):
-    def m(match, word_start, word_end):
-        # XXX: We might need to turn some of these <= into < or so, there could
-        # be an off-by-one error here, matching a next word when it should not.
-        return (match[0] >= word_start and match[0] <= word_end) or \
-               (match[1] >= word_start and match[1] <= word_end) or \
-               (word_start >= match[0] and word_end <= match[0]) or \
-               (word_start >= match[1] and word_end <= match[1])
+    def intersects(match, word_start, word_end):
+        # XXX: There might be an off-by-one error here due to the use of '<'
+        return (match[0] < word_end) and (match[1] >= word_start)
 
     matching_words = []
-    in_word = False
-    current_match_words = []
-
-    current_match_index = 0
     str_idx = 0
+    word_i = 0
+    for match in match_indexes:
+        match_words = []
+        for i in range(word_i, len(hocr_words)):
+            word = hocr_words[i]
+            word_start = str_idx
+            word_end = str_idx + len(word['text'])
 
-    for word in hocr_words:
-        if current_match_index >= len(match_indexes):
+            if intersects(match, word_start, word_end):
+                # Starting or continuing the match
+                match_words.append(word)
+                word_i = i + 1
+                str_idx += len(word['text']) + 1
+            elif match_words:
+                # No longer intersecting, so we can add the match words and break
+                # without incrementing
+                break
+            else:
+                # Haven't started matching yet, so we can continue to the next word
+                word_i = i + 1
+                str_idx += len(word['text']) + 1
+        if match_words:
+            # If we have a match, we can add it to the list
+            matching_words.append(match_words)
+        
+        if word_i >= len(hocr_words):
+            # If we have reached the end of the words, we can stop
             break
-
-        word_start = str_idx
-        word_end = str_idx + len(word['text'])
-
-        if in_word:
-            # match in the word, or word in match
-            if m(match_indexes[current_match_index], word_start, word_end):
-                current_match_words.append(word)
-            else:
-                matching_words.append(current_match_words)
-                current_match_words = []
-                current_match_index += 1
-                in_word = False
-
-        if not in_word and current_match_index < len(match_indexes):
-            if m(match_indexes[current_match_index], word_start, word_end):
-                current_match_words.append(word)
-
-                in_word = True
-
-        # Add + 1 for the space after a word
-        str_idx += len(word['text']) + 1
-
-    if current_match_index < len(match_indexes):
-        word_start = str_idx
-        word_end = str_idx + len(word['text'])
-
-        if in_word:
-            if m(match_indexes[current_match_index], word_start, word_end):
-                current_match_words.append(word)
-            else:
-                matching_words.append(current_match_words)
-                current_match_words = []
-                current_match_index += 1
-                in_word = False
-        else:
-            if m(match_indexes[current_match_index], word_start, word_end):
-                current_match_words.append(word)
-                matching_words.append(current_match_words)
 
     return matching_words
 
