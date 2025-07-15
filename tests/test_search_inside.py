@@ -50,3 +50,72 @@ def test_search_inside(sim_hocr_file, sim_hocr_lookup_file, sim_hocr_searchtext_
     known_data = json.load(open('test-files/hocr_search_sim_english_fts.json', 'r+'))
 
     assert data == known_data
+
+
+class TestMatchWords:
+    def test_match_words_empty(self):
+        from hocr.fts import match_words
+
+        hocr_words = []
+        match_indices = []
+        assert match_words(hocr_words, match_indices) == []
+
+        hocr_words = [{'text': 'test'}]
+        match_indices = []
+        assert match_words(hocr_words, match_indices) == []
+
+        hocr_words = []
+        match_indices = [(0, 1)]
+        assert match_words(hocr_words, match_indices) == []
+
+    def test_match_words(self):
+        from hocr.fts import match_words
+
+        # Failing case from https://webarchive.jira.com/browse/WEBDEV-4873
+        text = """organized in Chicago, Illinois on September 29-30, 1900, made a trip to England. After arrival there he found that there was an Association known as <IA_FTS_MATCH>The Commercial Travelers</IA_FTS_MATCH>’ Christian Association already in existence."""
+        hocr_words = [
+            {'text': word}
+            for word in text.replace('<IA_FTS_MATCH>', '').replace('</IA_FTS_MATCH>', '').split()
+        ]
+        match_indices = [(149, 173)]
+
+        assert match_words(hocr_words, match_indices) == [
+            [
+                {'text': 'The'},
+                {'text': 'Commercial'},
+                {'text': 'Travelers’'},
+            ]
+        ]
+
+    def test_match_words_multiple(self):
+        from hocr.fts import match_words
+
+        text = """organized in Chicago, Illinois on September 29-30, 1900, made a trip to England. After arrival there he found that there was an <IA_FTS_MATCH>Association</IA_FTS_MATCH> known as The <IA_FTS_MATCH>Commercial Travelers</IA_FTS_MATCH>’ Christian <IA_FTS_MATCH>Association</IA_FTS_MATCH> already in existence."""
+        hocr_words = [
+            {'text': word}
+            for word in text.replace('<IA_FTS_MATCH>', '').replace('</IA_FTS_MATCH>', '').split()
+        ]
+        match_indices = [(128, 139), (153, 173), (185, 196)]
+
+        assert match_words(hocr_words, match_indices) == [
+            [{'text': 'Association'}],
+            [
+                {'text': 'Commercial'},
+                {'text': 'Travelers’'},
+            ],
+            [{'text': 'Association'}]
+        ]
+
+    def test_match_words_adjacent(self):
+        from hocr.fts import match_words
+
+        text = """<IA_FTS_MATCH>Hello</IA_FTS_MATCH> <IA_FTS_MATCH>World</IA_FTS_MATCH>"""
+        hocr_words = [
+            {'text': word}
+            for word in text.replace('<IA_FTS_MATCH>', '').replace('</IA_FTS_MATCH>', '').split()
+        ]
+        match_indices = [(0, 5), (6, 11)]
+        assert match_words(hocr_words, match_indices) == [
+            [{'text': 'Hello'}],
+            [{'text': 'World'}],
+        ]
