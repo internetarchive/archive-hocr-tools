@@ -24,6 +24,7 @@ FINAL_POST_TAG = '}}}'
 def match_words(hocr_words, match_indexes):
     def intersects(match, word_start, word_end):
         # XXX: There might be an off-by-one error here due to the use of '<'
+        # which would cause an error if the last word was exactly one character
         return (match[0] < word_end) and (match[1] >= word_start)
 
     matching_words = []
@@ -40,21 +41,22 @@ def match_words(hocr_words, match_indexes):
                 # Starting or continuing the match
                 match_words.append(word)
                 word_i = i + 1
+                # Add + 1 for the space after a word
                 str_idx += len(word['text']) + 1
             elif match_words:
-                # No longer intersecting, so we can add the match words and break
+                # No longer intersecting, so we can stop processing this match
                 # without incrementing
                 break
             else:
                 # Haven't started matching yet, so we can continue to the next word
                 word_i = i + 1
+                # Add + 1 for the space after a word
                 str_idx += len(word['text']) + 1
+
         if match_words:
-            # If we have a match, we can add it to the list
             matching_words.append(match_words)
         
         if word_i >= len(hocr_words):
-            # If we have reached the end of the words, we can stop
             break
 
     return matching_words
