@@ -115,7 +115,11 @@ class DaisyGenerator:
     def get_scandata_pages(self) -> List[OrderedDict]:
         """Return the scandata pages data."""
         book = self.get_bookdata()
-        return book['pageData']['page']
+        sd_pages = book['pageData']['page']
+        if not isinstance(sd_pages, list):
+            sd_pages = [sd_pages]
+        return sd_pages
+
 
     # TODO: candidate for removal/refactor
     def par_is_pageno_header_footer_hocr(self, par) -> bool:
