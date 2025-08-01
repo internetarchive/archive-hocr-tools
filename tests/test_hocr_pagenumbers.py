@@ -18,4 +18,8 @@ def test_hocr_pagenumbers(sim_hocr_file, sim_english_pagenumber_json_file):
     new = json.load(open(pagenumber_json_file, 'rb'))
     old = json.load(open(sim_english_pagenumber_json_file, 'rb'))
 
+    # Ignore the version in the comparison
+    del old['archive-hocr-tools-version']
+    del new['archive-hocr-tools-version']
+
     assert old == new
