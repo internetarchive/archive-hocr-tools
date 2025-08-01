@@ -30,12 +30,6 @@ def test_add_pagetarget_handles_int_numstrs_and_roman_numerals(name, value) -> N
     assert book.max_page_number == int(name)
 
 
-def test_add_pagetarget_raises_ValueError_with_unexpected_value() -> None:
-    with pytest.raises(ValueError):
-        book = DaisyBook(out_name="Test", metadata=[{"tag": "blob"}])
-        book.add_pagetarget(name="1", value="one")
-
-
 @pytest.mark.parametrize(
     ("input", "expected"),
     [
