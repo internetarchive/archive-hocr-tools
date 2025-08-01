@@ -15,7 +15,7 @@ def test_hocr_pagenumbers(sim_hocr_file, sim_english_pagenumber_json_file):
 
     check_call(['hocr-pagenumbers', '-f', sim_hocr_file, '-o', pagenumber_json_file])
 
-    new = open(pagenumber_json_file, 'rb').read()
-    old = open(sim_english_pagenumber_json_file, 'rb').read()
+    new = json.load(open(pagenumber_json_file, 'rb'))
+    old = json.load(open(sim_english_pagenumber_json_file, 'rb'))
 
     assert old == new
