@@ -1,10 +1,11 @@
+import io
 import xml.parsers.expat
 
 from .util import open_if_required
-from .parse import hocr_page_to_word_data_fast, hocr_page_iterator
+from .parse import hocr_page_to_word_data, hocr_page_iterator
 
 
-def hocr_paragraph_text(paragraph):
+def hocr_paragraph_text(paragraph, sort_words=False):
     """
     Reconstruct text that matches the FTS text from a hOCR paragraph.
     Returns a tuple, first item in the tuple is the text, the second is a
@@ -25,7 +26,11 @@ def hocr_paragraph_text(paragraph):
 
     for line in paragraph['lines']:
         line_words = ''
-        for word in line['words']:
+        words = line['words'][:]
+        if sort_words:
+            # sort words by bbox (x1, y1)
+            words.sort(key=lambda word: (word['bbox'][0], word['bbox'][1]))
+        for word in words:
             line_words += word['text'] + ' '
 
         # Encode
@@ -43,7 +48,35 @@ def hocr_paragraph_text(paragraph):
     return par_text
 
 
-def hocr_page_text_from_word_data(word_data):
+def hocr_paragraph_bbox(paragraph):
+    """
+    xxx
+
+    Args:
+
+    * paragraph: hOCR paragraph as returned by hocr_paragraphs
+
+    Returns:
+
+    * Tuple of (`int`, `int`, `int`, `int`), where xxx
+    """
+    _inf = 999999999999
+    x1, y1, x2, y2 = _inf, _inf, 0, 0
+
+    for line in paragraph['lines']:
+        for word in line['words']:
+            _x1, _y1, _x2, _y2 = word['bbox']
+            if _x1 < x1: x1 = _x1
+            if _y1 < y1: y1 = _y1
+            if _x2 > x2: x2 = _x2
+            if _y2 > y2: y2 = _y2
+
+    if (x1, y1, x2, y2) == (_inf, _inf, 0, 0):
+        return None # no words in paragraph
+    return x1, y1, x2, y2
+
+
+def hocr_page_text_from_word_data(word_data, sort_words=False):
     """
     Extract text from a pre-parsed hOCR page
 
@@ -51,23 +84,36 @@ def hocr_page_text_from_word_data(word_data):
 
     * word_data: as returned by ``hocr_page_to_word_data`` or
       ``hocr_page_to_word_data_fast``
+    * sort_words: set to True to sort words by their bbox positions
 
     Returns: page contents (`str`)
     """
-    text = ''
+    par_list = []
 
     for paragraph in word_data:
-        par_text = hocr_paragraph_text(paragraph)
+        par_text = hocr_paragraph_text(paragraph, sort_words=sort_words)
+        par_bbox = hocr_paragraph_bbox(paragraph)
+        if par_bbox is None: continue # no words in paragraph
 
         # Newline is something we add, it is not part of the paragraph text
         par_text += '\n'
 
-        text += par_text
+        par = (par_text, par_bbox)
+        par_list.append(par)
+
+    if sort_words:
+        # sort paragraphs by bbox (y1, x1)
+        par_list.sort(key=lambda par: (par[1][1], par[1][0]))
+
+    _io = io.StringIO()
+    for par in par_list:
+        _io.write(par[0])
+    text = _io.getvalue()
 
     return text
 
 
-def hocr_page_text(page):
+def hocr_page_text(page, sort_words=False):
     """
     Extract text from a hOCR XML page element.
 
@@ -77,8 +123,8 @@ def hocr_page_text(page):
 
     Returns: page contents (`str`)
     """
-    word_data = hocr_page_to_word_data_fast(page)
-    return hocr_page_text_from_word_data(word_data)
+    word_data = hocr_page_to_word_data(page)
+    return hocr_page_text_from_word_data(word_data, sort_words=sort_words)
 
 
 def get_paragraph_hocr_words(paragraph):
