@@ -20,7 +20,7 @@ def process_file(hocrfile):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='hOCR to plaintext')
     parser.add_argument('-f', '--infile', help='Filename to read',
-                        type=str, default=None)
+                        type=str, required=True)
     args = parser.parse_args()
 
     process_file(args.infile)
