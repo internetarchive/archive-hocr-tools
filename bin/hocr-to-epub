@@ -289,12 +289,16 @@ class EpubGenerator(object):
 
         # Set sensible defaults for arguments that weren't provided
         if not self.meta_xml_file_path:
+            assert self.hocr_xml_file_path.endswith('_hocr.html')
             self.meta_xml_file_path = self.hocr_xml_file_path.replace('_hocr.html', '_meta.xml')
         if not self.image_stack_zip_file_path:
+            assert self.hocr_xml_file_path.endswith('_hocr.html')
             self.image_stack_zip_file_path = self.hocr_xml_file_path.replace('_hocr.html', '_jp2.zip')
         if not self.scandata_xml_file_path:
+            assert self.hocr_xml_file_path.endswith('_hocr.html')
             self.scandata_xml_file_path = self.hocr_xml_file_path.replace('_hocr.html', '_scandata.xml')
         if not self.epub_zip_file_path:
+            assert self.hocr_xml_file_path.endswith('_hocr.html')
             self.epub_zip_file_path = self.hocr_xml_file_path.replace('_hocr.html', '_ebook.epub')
 
         # We can still make an epub without any of these if we must
