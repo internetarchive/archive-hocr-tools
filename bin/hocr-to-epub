@@ -588,7 +588,8 @@ class EpubGenerator(object):
             words_on_page = 0
             # ABBYY converter sometimes identifies linebreaks as a negation sign
             hyphens = ['-', '¬']
-            # Combine all all the words on the page
+            # Build the page content while preserving the paragraph structure
+            # from the hOCR. Each paragraph becomes its own <p> element.
             for element in word_data:
                 line_content = []
                 for line in element['lines']:
@@ -610,14 +611,20 @@ class EpubGenerator(object):
                         line_content[-1] = line_content[-1][:-1]
                         # Add placeholder value
                         line_content.append('\x7f')
-                page_content += line_content
 
-            # Flatten list into string and add spaces
-            page_text = ' '.join(page_content)
-            # Remove placeholder and spaces in the positions that previously had a line break hyphen
-            page_text = page_text.replace(' \x7f ', '')
-            # Create HTML/epub page
-            page_html = u"<p>%s</p>" % page_text
+                # Skip paragraphs with no words so we don't emit empty <p> tags.
+                if not line_content:
+                    continue
+
+                # Join the words of this paragraph, then remove the placeholder
+                # (and surrounding spaces) that mark words hyphenated across a
+                # line break within this paragraph.
+                page_text = ' '.join(line_content)
+                page_text = page_text.replace(' \x7f ', '')
+                page_content.append(u"<p>%s</p>" % page_text)
+
+            # Combine the per-paragraph HTML blocks into the page content.
+            page_html = ''.join(page_content)
 
             # Add a warning if the confidence in the text is below the given threshold
             if words_on_page:
