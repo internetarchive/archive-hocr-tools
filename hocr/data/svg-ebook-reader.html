@@ -1,0 +1,318 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+<head>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>SVG eBook Reader</title>
+<meta name="generator" content="hocr-to-epub-fxl"/>
+<link rel="canonical" href=""/>
+<style>
+  body {
+    margin: 0;
+    font-family: Arial, sans-serif;
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    overflow: hidden;
+  }
+
+  #menu-bar {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 30px;
+    padding: 5px 10px;
+    background-color: #f0f0f0;
+    border-bottom: 1px solid #ccc;
+  }
+  #menu-bar {
+    transform-origin: top left;
+    /* transition: transform 0.1s ease; */
+    z-index: 10;
+  }
+
+  #menu-bar > * {
+    margin-left: 5px;
+    margin-right: 5px;
+    font-size: 16px;
+  }
+
+  #menu-bar button {
+    padding: 5px 10px;
+  }
+
+  #menu-bar input {
+    width: 50px;
+    text-align: center;
+  }
+
+  #menu-bar button,
+  #menu-bar input,
+  #menu-bar > a {
+    display: inline-block;
+    padding: 5px 10px;
+    border: solid 1px #5b5b5b;
+    border-radius: 2px;
+    color: black;
+    text-decoration: none;
+    cursor: default;
+  }
+  #menu-bar button:hover,
+  #menu-bar > a:hover {
+    background: #e5e5e5;
+  }
+
+  #viewer {
+    flex: 1;
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+    overflow-y: auto;
+    background-color: #e0e0e0;
+    scroll-behavior: smooth;
+  }
+
+  iframe {
+    border: none;
+    flex: 1 1 auto;
+    height: 100%;
+    /* ensure full viewport height */
+    /* height: 100vh; */
+    margin: 0 5px;
+    transform-origin: top center;
+  }
+
+  /* Single-page mode */
+  #viewer.single-page iframe {
+    width: 100%;
+    margin: 0;
+  }
+
+  /* Two-page mode */
+  #viewer.two-page iframe {
+    width: 45%;
+  }
+</style>
+</head>
+<body>
+
+<div id="menu-bar">
+  <a href="OEBPS/nav.xhtml" target="page1">Contents</a>
+  <button id="prevPage">Previous</button>
+  <button id="nextPage">Next</button>
+  <input type="number" id="pageNumber" min="1" value="1"/>
+  <span id="totalPages"></span>
+  <button id="toggleMode">Two-Page Mode</button>
+  <a href="OEBPS/allpages.xhtml">All Pages</a>
+  <a href="OEBPS/fulltext.xhtml">Full Text</a>
+</div>
+
+<div id="viewer" class="single-page">
+  <iframe id="page1" name="page1" enable-annotation=""></iframe>
+</div>
+
+<script>
+  // <![CDATA[
+
+  // --- CONFIG: list of SVG files ---
+  const svgFiles = [ /* TODO */ ];
+
+  let currentPage = 1; // 1-based
+  const totalPages = svgFiles.length;
+
+  const viewer = document.getElementById('viewer');
+  const pageNumberInput = document.getElementById('pageNumber');
+  const totalPagesSpan = document.getElementById('totalPages');
+  const toggleBtn = document.getElementById('toggleMode');
+
+  totalPagesSpan.textContent = `/ ${totalPages}`;
+
+  let twoPageMode = false; // single-page default
+
+  function createIframe(id) {
+    const iframe = document.createElement('iframe');
+    iframe.id = id;
+    iframe.setAttribute("name", id);
+    // enable hypothesis annotations in iframe
+    // https://h.readthedocs.io/projects/client/en/latest/publishers/embedding.html
+    iframe.setAttribute("enable-annotation", "");
+    viewer.appendChild(iframe);
+    return iframe;
+  }
+
+  function getIframe(index) {
+    return document.getElementById(index);
+  }
+
+  function loadPages() {
+    let page1 = document.getElementById('page1');
+    if (!page1) page1 = createIframe('page1');
+
+    let page2 = document.getElementById('page2');
+    if (twoPageMode && !page2) page2 = createIframe('page2');
+    if (!twoPageMode && page2) page2.remove();
+
+    // reduce white flash on page load in dark mode
+    // wait extra 100ms to avoid white flash from text layer
+    page1.style.visibility = "hidden";
+    page1.onload = () => { setTimeout(() => { page1.style.visibility = "visible"; }, 100); };
+    if (twoPageMode) {
+      page2.style.visibility = "hidden";
+      page2.onload = () => { setTimeout(() => { page2.style.visibility = "visible"; }, 100); };
+    }
+
+    if (twoPageMode) {
+      // Compute spread: left = even page
+      let leftIndex, rightIndex;
+
+      if (currentPage === 1) {
+        leftIndex = -1;       // empty
+        rightIndex = 0;       // page 1
+      } else {
+        leftIndex = currentPage % 2 === 0 ? currentPage - 1 : currentPage - 2;
+        rightIndex = leftIndex + 1;
+      }
+
+      page1.src = leftIndex >= 0 ? svgFiles[leftIndex] : '';
+      page2.src = rightIndex < totalPages ? svgFiles[rightIndex] : '';
+
+    } else {
+      page1.src = svgFiles[currentPage - 1] || '';
+    }
+
+    pageNumberInput.value = currentPage;
+    viewer.scrollTop = 0;
+  }
+
+  function goToPage(page, fromHash = false) {
+    // if (page < 1) page = 1; // limit
+    // if (page > totalPages) page = totalPages; // limit
+    if (page < 1) page = totalPages; // overflow
+    if (page > totalPages) page = 1; // overflow
+    currentPage = page;
+    loadPages();
+    // update hash if user navigated via buttons/input/etc.
+    if (!fromHash) {
+      history.replaceState(null, '', `#${currentPage}`);
+    }
+  }
+
+  function nextPage() {
+    if (twoPageMode) goToPage(currentPage + 2);
+    else goToPage(currentPage + 1);
+  }
+
+  function prevPage() {
+    if (twoPageMode) goToPage(currentPage - 2);
+    else goToPage(currentPage - 1);
+  }
+
+  function updateMode() {
+    viewer.className = twoPageMode ? 'two-page' : 'single-page';
+    toggleBtn.textContent = twoPageMode ? 'Single-Page Mode' : 'Two-Page Mode';
+    loadPages();
+  }
+
+  document.getElementById('prevPage').addEventListener('click', prevPage);
+  document.getElementById('nextPage').addEventListener('click', nextPage);
+  pageNumberInput.addEventListener('change', () => goToPage(parseInt(pageNumberInput.value)));
+  toggleBtn.addEventListener('click', () => {
+    twoPageMode = !twoPageMode;
+    updateMode();
+  });
+
+  window.addEventListener('resize', () => {
+    // optional: could auto-switch based on width
+  });
+
+  // Keyboard navigation
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowLeft') prevPage();
+    if (e.key === 'ArrowRight') nextPage();
+    if (e.key === 'ArrowUp') viewer.scrollBy({ top: -50, behavior: 'smooth' });
+    if (e.key === 'ArrowDown') viewer.scrollBy({ top: 50, behavior: 'smooth' });
+  });
+
+  // Sync scrolling in two-page mode
+  viewer.addEventListener('scroll', () => {
+    if (twoPageMode) {
+      const page1 = document.getElementById('page1');
+      const page2 = document.getElementById('page2');
+      if (page1?.contentWindow) page1.contentWindow.scrollTo(0, viewer.scrollTop);
+      if (page2?.contentWindow) page2.contentWindow.scrollTo(0, viewer.scrollTop);
+    }
+  });
+
+  // prevent toolbar zoom
+  let lastDevicePixelRatio = window.devicePixelRatio;
+  function updateToolbarScale() {
+    const ratio = window.devicePixelRatio;
+    const toolbar = document.getElementById('menu-bar');
+    // Apply inverse scale so the toolbar stays 1:1 visually
+    toolbar.style.transform = `scale(${1 / ratio})`;
+    // scale toolbar height
+    // 40px = height + padding = 30px + 2*5px
+    toolbar.style.marginBottom = `${((1 / ratio) - 1) * 40}px`;
+    // Compensate for layout shrink (otherwise the scaled bar no longer spans full width)
+    toolbar.style.width = `${100 * ratio}%`;
+    lastDevicePixelRatio = ratio;
+  }
+  updateToolbarScale();
+  // Monitor for zoom changes (devicePixelRatio changes)
+  window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`)
+    .addEventListener('change', updateToolbarScale);
+  // Also poll periodically as fallback (some browsers don't fire the event reliably)
+  setInterval(() => {
+    if (window.devicePixelRatio !== lastDevicePixelRatio) {
+      updateToolbarScale();
+    }
+  }, 1000);
+
+  function getPageFromHash() {
+    const match = location.hash.match(/^#(\d+)/);
+    return match ? parseInt(match[1], 10) : null;
+  }
+
+  // Initial load: get page number from URL fragment ID
+  const initialPage = getPageFromHash();
+  if (initialPage && initialPage >= 1 && initialPage <= totalPages) {
+    currentPage = initialPage;
+  }
+
+  // Initial load
+  loadPages();
+  updateMode();
+
+  // Make sure the hash is correct (e.g. if user loaded without one)
+  history.replaceState(null, '', `#${currentPage}`);
+
+  // --- URL fragment synchronization ---
+  // When URL hash changes, navigate to that page
+  window.addEventListener('hashchange', () => {
+    const pageFromHash = getPageFromHash();
+    if (pageFromHash && pageFromHash !== currentPage) {
+      goToPage(pageFromHash, true);
+    }
+  });
+
+  // handle clicks from nav.xhtml
+  window.addEventListener("message", (event) => {
+    if (event.data.type === "iframe-link-click") {
+      const match = /\/OEBPS\/(\d+).xhtml$/.exec(event.data.href);
+      if (match) {
+        const pageNum = Number(match[1]);
+        // load page again to update menu
+        goToPage(pageNum);
+      }
+      else {
+        console.error("error: iframe navigated to unrecognized URL:", event.data.href);
+      }
+    }
+  });
+
+  // ]]>
+
+</script>
+
+</body>
+</html>
