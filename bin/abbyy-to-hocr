@@ -11,7 +11,16 @@ from hocr.util import open_if_required, iterparse_tags, register_and_nuke_xhtml_
 
 import numpy as np
 
-import pkg_resources
+try:  # Python 3.9+
+    from importlib.resources import files
+except ImportError:  # pragma: no cover - Python < 3.9 (pkg_resources era)
+    import pathlib
+
+    import pkg_resources
+
+    def files(package):
+        return pathlib.Path(pkg_resources.resource_filename(package, ''))
+
 import csv
 import io
 
@@ -62,7 +71,7 @@ def load_langs():
     global LANG_DATA
 
     LANG_DATA = {}
-    data = pkg_resources.resource_string('hocr', 'data/abbyy-lang-map.csv')
+    data = files('hocr').joinpath('data/abbyy-lang-map.csv').read_bytes()
     langcsv = csv.DictReader(io.StringIO(data.decode('utf-8')))
     for row in langcsv:
         if row['code']:
