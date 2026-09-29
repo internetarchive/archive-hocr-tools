@@ -5,7 +5,15 @@ from datetime import datetime
 from typing import Dict, List, Optional, Tuple, Union
 from xml.dom import minidom
 
-import pkg_resources
+try:  # Python 3.9+
+    from importlib.resources import files
+except ImportError:  # pragma: no cover - Python < 3.9 (pkg_resources era)
+    import pathlib
+
+    import pkg_resources
+
+    def files(package):
+        return pathlib.Path(pkg_resources.resource_filename(package, ''))
 
 from .util import roman_to_num
 
@@ -74,10 +82,9 @@ class DaisyBook:
             'html.css',
             'resource.res',
         ]:
-            content_src = pkg_resources.resource_filename(
-                'hocr', f'daisy/daisy_files/{content}'
+            content_str = (
+                files('hocr').joinpath(f'daisy/daisy_files/{content}').read_text()
             )
-            content_str = open(content_src).read()
             self.add(self.content_dir + content, content_str)
 
         self.manifest_items = [
