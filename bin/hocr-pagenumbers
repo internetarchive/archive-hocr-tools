@@ -226,7 +226,11 @@ class CompositeNumberingScheme(object):
         self.orig_val = val
         self.count = len(COMPOSITE_DIGIT_RE.findall(val))
         self.format = COMPOSITE_DIGIT_SUB.sub(r'%d', val.replace('%', '%%'))
-        self.composite_scheme = '^' + COMPOSITE_DIGIT_SUB.sub(r'\\d+', re.escape(val)) + '$'
+        # The runtime matcher must apply the same 1-8 digit bound as
+        # COMPOSITE_DIGIT_RE (used by count/numeral_value); otherwise a scheme
+        # built from e.g. 'V-21' (regex ^V-\d+$) will match a longer run like
+        # 'V-210012345', which then breaks the MUL encoding in from_num().
+        self.composite_scheme = '^' + COMPOSITE_DIGIT_SUB.sub(r'\\d{1,8}', re.escape(val)) + '$'
         self.comp_re = re.compile(self.composite_scheme)
 
         self.SUPPORT_EXTRAPOLATION = False
@@ -265,6 +269,9 @@ class CompositeNumberingScheme(object):
             digits.append(r)
             idx += 1
             r = (n // self.MUL**idx) % self.MUL
+
+        if len(digits) > self.count:
+            raise ValueError('number %d does not fit composite scheme %r' % (n, self.orig_val))
 
         if len(digits) != self.count:
             digits += [0] * (self.count - len(digits))
