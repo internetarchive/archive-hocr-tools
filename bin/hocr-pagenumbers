@@ -355,6 +355,35 @@ NUMBER_SCHEMES = [
 ]
 
 
+# Largest coordinate value that may be used to build features. Most of the
+# features are products of two coordinates, so keeping every coordinate at or
+# below isqrt(2**31 - 1) guarantees those products still fit in the int32
+# feature matrix.
+MAX_COORDINATE = 46340  # == isqrt(2**31 - 1)
+
+
+def clamp_bbox_to_page(box, page_dim):
+    """
+    Clamps the four coordinates of a bounding box into the page box.
+
+    Unusable page dimensions (zero or negative) fall back to MAX_COORDINATE,
+    and the page box itself is capped at MAX_COORDINATE too, so that the
+    returned coordinates are always safe to square.
+    """
+    page_w = max(int(page_dim[0]), 0)
+    page_h = max(int(page_dim[1]), 0)
+
+    if page_w == 0 or page_w > MAX_COORDINATE:
+        page_w = MAX_COORDINATE
+    if page_h == 0 or page_h > MAX_COORDINATE:
+        page_h = MAX_COORDINATE
+
+    x1, y1, x2, y2 = (int(v) for v in box)
+
+    return (min(max(x1, 0), page_w), min(max(y1, 0), page_h),
+            min(max(x2, 0), page_w), min(max(y2, 0), page_h))
+
+
 def create_candidate_features(page_dim, page_contents_box, hocr_word, pageidx):
     """
     Features:
@@ -364,24 +393,24 @@ def create_candidate_features(page_dim, page_contents_box, hocr_word, pageidx):
     - Pageidx parity bit and all above features multiplied by parity bit (20 features)
     - Typography: currently just font size (1 feature)
     """
-    features = np.ndarray((NUM_FEATURES,), dtype=np.int32)
+    # Zero-initialised so that features that cannot be computed (e.g. the page
+    # ratio for a page with a zero height) default to 0 instead of to whatever
+    # happened to be in memory.
+    features = np.zeros((NUM_FEATURES,), dtype=np.int32)
 
-    # Word bbox (4 features)
-    x1, y1, x2, y2 = hocr_word['bbox']
-
-    x1 = int(x1)
-    y1 = int(y1)
-    x2 = int(x2)
-    y2 = int(y2)
+    # Word bbox (4 features), clamped to the page box so that the quadratic
+    # features below cannot overflow (see clamp_bbox_to_page).
+    x1, y1, x2, y2 = clamp_bbox_to_page(hocr_word['bbox'], page_dim)
 
     features[0:4] = [x1, y1, x2, y2]
     # Quadratic combination of word bbox (10 features)
     features[4:14] = [x1 * x1, y1 * y1, x2 * x2, y2 * y2, x1 * y1, x1 * x2,
                       x1 * y2, y1 * x2, y1 * y2, x2 * y2]
     # Page ratio (1 feature)
-    features[14] = int(page_dim[0]) / int(page_dim[1])
+    if int(page_dim[1]) != 0:
+        features[14] = int(page_dim[0]) / int(page_dim[1])
     # Bounding box of found content of the page (4 features)
-    features[15:19] = [int(x) for x in page_contents_box]
+    features[15:19] = clamp_bbox_to_page(page_contents_box, page_dim)
     # Page parity bit (1 feature)
     features[19] = 1 if pageidx % 2 == 0 else -1
     # Parity bit multiplication of previous features (20 features)
