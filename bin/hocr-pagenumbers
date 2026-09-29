@@ -259,26 +259,22 @@ class CompositeNumberingScheme(object):
         return n
 
     def from_num(self, n):
-        idx = 0
+        # Decompose into exactly `count` base-MUL digits, least significant
+        # first, then emit them most significant first.  If a nonzero digit
+        # remains above the `count` slots the value does not fit this scheme.
+        # (A fixed-width decomposition is required so that a trailing zero in
+        # the least significant group, e.g. "13-0", is preserved instead of
+        # being dropped by the old scan-until-a-zero extraction loop.)
+        orig_n = n
         digits = []
-        r = n % self.MUL
-        if r == 0:
-            digits.append(r)
+        for _ in range(self.count):
+            digits.append(n % self.MUL)
+            n //= self.MUL
 
-        while r != 0:
-            digits.append(r)
-            idx += 1
-            r = (n // self.MUL**idx) % self.MUL
+        if n != 0:
+            raise ValueError('number %d does not fit composite scheme %r' % (orig_n, self.orig_val))
 
-        if len(digits) > self.count:
-            raise ValueError('number %d does not fit composite scheme %r' % (n, self.orig_val))
-
-        if len(digits) != self.count:
-            digits += [0] * (self.count - len(digits))
-
-        digits = tuple(reversed(digits))
-
-        v = self.format % digits
+        v = self.format % tuple(reversed(digits))
         return v
 
     def extrapolate_sequence(self, sequence, start, end):
