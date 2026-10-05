@@ -195,6 +195,32 @@ class ImageStack(object):
             pass
 
 
+class PageHtml(epub.EpubHtml):
+    """A page that can omit the ``lang``/``xml:lang`` attributes.
+
+    ebooklib always writes ``lang`` from ``self.lang or self.book.language`` and
+    lxml cannot store ``None``. When no language is known we set a sentinel value
+    so the base class can serialize, then strip it back out of the result.
+    """
+    omit_lang = False
+
+    def get_content(self, default=None):
+        if not self.omit_lang:
+            return super().get_content(default)
+
+        sentinel = '__OMIT_LANG__'
+        original_lang = self.lang
+        self.lang = sentinel
+        try:
+            content = super().get_content(default)
+        finally:
+            self.lang = original_lang
+
+        content = content.replace((' lang="%s"' % sentinel).encode('utf-8'), b'')
+        content = content.replace((' xml:lang="%s"' % sentinel).encode('utf-8'), b'')
+        return content
+
+
 class EpubGenerator(object):
 
     __version__ = '1.0.0'
@@ -339,19 +365,47 @@ class EpubGenerator(object):
         print("Parsing file %s" % self.hocr_xml_file_path)
         self.generate()
 
+    def _ocr_detected_language_confident(self, threshold=0.5):
+        """True if a confident OCR-detected language is available in the metadata."""
+        if not self.metadata.get('ocr_detected_lang'):
+            return False
+        try:
+            return float(self.metadata.get('ocr_detected_lang_conf')) >= threshold
+        except (TypeError, ValueError):
+            return False
+
     def set_metadata(self):
         """
         Set the metadata on the epub object
         """
         if 'identifier' in self.metadata.keys():
             self.book.set_identifier(self.metadata['identifier'])
-        if 'language' in self.metadata.keys():
-            if type(self.metadata['language']) is str:
-                self.metadata['language'] = hocr.extutil.normalize_language(self.metadata['language'])
-                self.book.set_language(self.metadata['language'])
-            elif type(self.metadata['language']) is list:
-                self.metadata['language'] = '; '.join(map(hocr.extutil.normalize_language, self.metadata['language']))
-                self.book.set_language(self.metadata['language'])
+        # Determine the book language(s). Prefer explicit metadata; fall back to the
+        # OCR-detected language when it is reported confidently.
+        raw_lang = self.metadata.get('language')
+        if raw_lang:
+            raw_languages = raw_lang if isinstance(raw_lang, list) else [raw_lang]
+        elif self._ocr_detected_language_confident():
+            raw_languages = [self.metadata['ocr_detected_lang']]
+        else:
+            raw_languages = []
+
+        languages = [
+            normalized for normalized in
+            (hocr.extutil.normalize_language(lang) for lang in raw_languages)
+            if normalized
+        ]
+
+        if languages:
+            # The HTML lang attribute holds a single tag, so use the first language
+            # as the primary and emit every language as its own dc:language entry
+            # rather than joining them into one invalid tag.
+            self.language = languages[0]
+            self.book.set_language(self.language)
+            for extra_language in languages[1:]:
+                self.book.add_metadata('DC', 'language', extra_language)
+        else:
+            self.language = None
         if 'title' in self.metadata.keys():
             if isinstance(self.metadata['title'], str):
                 self.book.set_title(self.metadata['title'])
@@ -662,14 +716,14 @@ class EpubGenerator(object):
                     images_on_page += 1
 
             if words_on_page or images_on_page:
-                page_epub = epub.EpubHtml(title='Page %s' % page_idx,
-                                          file_name='page_%s.html' % page_idx,
-                                          media_type='application/xhtml+xml',
-                                          )
-                if 'language' in self.metadata.keys():
-                    page_epub.set_language(self.metadata['language'])
+                page_epub = PageHtml(title='Page %s' % page_idx,
+                                     file_name='page_%s.html' % page_idx,
+                                     media_type='application/xhtml+xml',
+                                     )
+                if self.language:
+                    page_epub.set_language(self.language)
                 else:
-                    page_epub.set_language('None')
+                    page_epub.omit_lang = True
                 page_epub.add_link(
                     href='style/style.css', rel='stylesheet', type='text/css'
                 )
