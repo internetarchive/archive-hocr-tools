@@ -87,3 +87,41 @@ _(append one entry per change as we go; mark the punch-list item.)_
   - Result on fixture: 44-entry ToC — `ILLUSTRATIONS`→p21, `CHAPTER I`→p23 … `CHAPTER THE LAST`→p448; landmarks `toc`→p15, `bodymatter`→p23. NCX (EPUB2 fallback) gets the same 88 navPoints. Tests unchanged (7 pre-existing failures).
   - Relationship to PAGENAV: the ToC and the page-list are separate nav structures that share the page files as targets and the scandata `pageNumData` (leaf→printed number) map. The ToC was built first; PAGENAV (page-list + `pageBreakSource`) is the adjacent follow-on that reuses that scandata map. Printed page numbers were deliberately left out of the ToC for now.
 
+### PAGENAV — page numbers from scandata (done)
+
+**Decision:** use the **scandata page-entry `pageNumber`** as the source (not
+`_page_numbers.json`). The scandata is the canonical single source, the maker
+already loads it, and it carries `addToAccessFormats`. Numbers are used
+**as-is — no interpolation** (any correction belongs upstream in the
+pagenumber tool).
+
+**Implementation:**
+- Build a leaf → printed-number map from the scandata page entries, skipping
+  leaves with `addToAccessFormats="false"` and empty numbers.
+- Prepend a pagebreak marker to each numbered page:
+  `<span epub:type="pagebreak" class="pagebreak" title="N" id="pgLEAF">N</span>`
+  (inline `xmlns:epub` so it is self-contained).
+- ebooklib's `epub3_pages` (default on) scans those markers and builds the
+  **page-list** nav automatically.
+- `.pagebreak` CSS renders the number as a subtle right-floated folio so it
+  reads as a margin marker, not body text.
+
+**Result on the fixture:** 407 pagebreak markers → 407 page-list entries
+(`page_24.html#pg24` → 2 … `page_450.html#pg450` → 388).
+
+**Known data quirk (kept as-is):** the scandata page entries carry ~40
+**duplicated printed numbers** in irregular regions (e.g. page 11 on both
+leaf 33 and leaf 35), so 20 page-list labels appear twice. These come from
+the page-entry numbers interpolating across the 3-leaf/1-page gaps and
+colliding with the next confirmed anchor.
+
+**Future option:** reconcile duplicates against the `pageNumData`
+**assertions** (the confirmed anchors) and keep the asserted leaf per number,
+which would make every page-list target unique. Not done now per the
+"use as-is" decision.
+
+**`pageBreakSource`:** not emitted (barely used by readers).
+
+**Remaining:** pageBreakSource if a reader needs provenance; printed numbers
+in the ToC entries themselves.
+
