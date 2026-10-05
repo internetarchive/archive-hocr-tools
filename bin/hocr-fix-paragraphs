@@ -1,0 +1,222 @@
+#!/usr/bin/env python
+
+"""Split merged hOCR paragraphs by line spacing.
+
+Some OCR merges several real paragraphs into a single ``ocr_par`` block.
+This tool splits such blocks back into separate ``ocr_par`` blocks wherever
+the vertical gap between two adjacent lines is larger than a threshold.
+
+The threshold is measured across the whole book (the distribution of the
+gaps between adjacent lines in every block), so it adapts to each book's
+typography. It can also be set directly with ``--gap-threshold``. A block
+shorter than ``--min-height-frac`` of the page is left alone.
+
+The output is a corrected hOCR document; downstream tools such as
+``hocr-to-epub`` need no changes because they already turn one block into
+one paragraph.
+"""
+
+import sys
+import re
+import argparse
+from xml.etree import ElementTree
+
+from hocr.parse import hocr_page_iterator, hocr_page_get_dimensions
+from hocr.util import (open_if_required, get_header_footer, elem_tostring,
+                      register_and_nuke_xhtml_namespace)
+
+BBOX_REGEX = re.compile(r'bbox((\s+-?\d+){4})')
+
+
+def parse_bbox(title):
+    """Return [x0, y0, x1, y1] from a hOCR ``title`` attribute, or None."""
+    match = BBOX_REGEX.search(title or '')
+    if not match:
+        return None
+    return [int(value) for value in match.group(1).split()]
+
+
+def get_lines(par):
+    """The ``ocr_line`` children of a paragraph element."""
+    return [child for child in par if child.get('class') == 'ocr_line']
+
+
+def union_bbox(lines):
+    boxes = [parse_bbox(line.get('title')) for line in lines]
+    boxes = [box for box in boxes if box]
+    if not boxes:
+        return None
+    return (min(b[0] for b in boxes), min(b[1] for b in boxes),
+            max(b[2] for b in boxes), max(b[3] for b in boxes))
+
+
+def normalized_gap(prev_line, cur_line):
+    """Vertical gap between two lines as a multiple of the previous line's height."""
+    prev_box = parse_bbox(prev_line.get('title'))
+    cur_box = parse_bbox(cur_line.get('title'))
+    if not prev_box or not cur_box:
+        return 0.0
+    height = prev_box[3] - prev_box[1]
+    if height <= 0:
+        return 0.0
+    return (cur_box[1] - prev_box[3]) / height
+
+
+def percentile(values, fraction):
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    index = min(len(ordered) - 1, int(fraction * len(ordered)))
+    return ordered[index]
+
+
+def group_lines_by_gap(lines, threshold):
+    """Split a block's lines into runs, starting a new run at a large gap."""
+    groups = [[lines[0]]]
+    for prev_line, cur_line in zip(lines, lines[1:]):
+        if normalized_gap(prev_line, cur_line) > threshold:
+            groups.append([cur_line])
+        else:
+            groups[-1].append(cur_line)
+    return groups
+
+
+def make_paragraph(template, lines, new_id):
+    """Build a new ``ocr_par`` element holding ``lines`` with a recomputed bbox."""
+    new_par = ElementTree.Element(template.tag)
+    for key, value in template.attrib.items():
+        if key in ('id', 'title'):
+            continue
+        new_par.set(key, value)
+    new_par.set('id', new_id)
+    box = union_bbox(lines)
+    if box:
+        new_par.set('title', 'bbox %d %d %d %d' % box)
+    for line in lines:
+        new_par.append(line)
+    return new_par
+
+
+def collect_gaps(page_iter):
+    """Every adjacent-line gap in every block across the whole book.
+
+    Takes a page iterator; each page is read before the streaming iterator
+    clears it.
+    """
+    gaps = []
+    for page in page_iter:
+        for par in page.findall('.//*[@class="ocr_par"]'):
+            lines = get_lines(par)
+            for prev_line, cur_line in zip(lines, lines[1:]):
+                gaps.append(normalized_gap(prev_line, cur_line))
+    return gaps
+
+
+def split_page(page, threshold, min_height):
+    """Split merged blocks in a page in place, starting a new paragraph at any
+    gap above ``threshold``. Blocks shorter than ``min_height`` are left alone.
+    Returns the number of new paragraphs created."""
+    # ElementTree has no parent pointers, so build a child -> parent map.
+    parent_of = {child: parent for parent in page.iter() for child in parent}
+
+    splits = 0
+    original_id = page.get('id', 'page')
+
+    for par in list(page.findall('.//*[@class="ocr_par"]')):
+        lines = get_lines(par)
+        if len(lines) < 2:
+            continue
+
+        box = parse_bbox(par.get('title'))
+        if not box:
+            continue
+        block_height = box[3] - box[1]
+        if block_height < min_height:
+            continue
+
+        groups = group_lines_by_gap(lines, threshold)
+        if len(groups) <= 1:
+            continue
+
+        parent = parent_of.get(par)
+        if parent is None:
+            continue
+        index = list(parent).index(par)
+        parent.remove(par)
+
+        for group_index, group in enumerate(groups):
+            new_id = '%s_p%d_s%d' % (original_id, index, group_index)
+            new_par = make_paragraph(par, group, new_id)
+            parent.insert(index + group_index, new_par)
+
+        splits += len(groups) - 1
+
+    return splits
+
+
+def process_file(args):
+    fd = open_if_required(args.infile)
+    top, bottom = get_header_footer(fd)
+
+    # Pass 1: measure the gap distribution across the whole book. The page
+    # iterator clears each page after yielding, so we consume it here and
+    # re-iterate (it seeks back to the start) for the second pass.
+    if args.gap_threshold is not None:
+        threshold = args.gap_threshold
+        gap_count = None
+    else:
+        gaps = collect_gaps(hocr_page_iterator(fd))
+        gap_count = len(gaps)
+        threshold = percentile(gaps, args.gap_percentile)
+
+    # Pass 2: split tall merged blocks and write the corrected document.
+    out = open(args.outfile, 'wb') if args.outfile else sys.stdout.buffer
+    total_splits = 0
+    try:
+        out.write(top)
+        for page in hocr_page_iterator(fd):
+            try:
+                _width, height = hocr_page_get_dimensions(page)
+            except Exception:
+                height = None
+            if height:
+                total_splits += split_page(
+                    page, threshold, height * args.min_height_frac)
+
+            page_bytes = elem_tostring(page)
+            page_bytes = b' ' + page_bytes.replace(
+                b' xmlns="http://www.w3.org/1999/xhtml"', b'')
+            out.write(page_bytes + b'\n')
+        out.write(bottom)
+    finally:
+        if args.outfile:
+            out.close()
+
+    if gap_count is None:
+        print('gap threshold: %.3f  (absolute)' % threshold, file=sys.stderr)
+    else:
+        print('gap threshold: %.3f  (percentile %.2f over %d gaps)'
+              % (threshold, args.gap_percentile, gap_count), file=sys.stderr)
+    print('paragraphs created: %d' % total_splits, file=sys.stderr)
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(
+        description='Split merged hOCR paragraphs by line spacing')
+    parser.add_argument('-f', '--infile', required=True,
+                        help='hOCR file to read (may be .gz)')
+    parser.add_argument('-o', '--outfile', default=None,
+                        help='Output file (default: stdout)')
+    parser.add_argument('--gap-threshold', type=float, default=None,
+                        help='Absolute gap threshold (multiple of line height). '
+                             'If omitted, derived from the whole book.')
+    parser.add_argument('--gap-percentile', type=float, default=0.99,
+                        help='Whole-book percentile used for the threshold '
+                             'when --gap-threshold is not given (default 0.99)')
+    parser.add_argument('--min-height-frac', type=float, default=0.0,
+                        help='Only split blocks at least this fraction of the '
+                             'page height (default 0.0 = every block)')
+    args = parser.parse_args()
+
+    register_and_nuke_xhtml_namespace()
+    process_file(args)
