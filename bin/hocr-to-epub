@@ -365,7 +365,7 @@ class EpubGenerator(object):
         print("Parsing file %s" % self.hocr_xml_file_path)
         self.generate()
 
-    def _ocr_detected_language_confident(self, threshold=0.5):
+    def _ocr_detected_language_confident(self, threshold=0.9):
         """True if a confident OCR-detected language is available in the metadata."""
         if not self.metadata.get('ocr_detected_lang'):
             return False
