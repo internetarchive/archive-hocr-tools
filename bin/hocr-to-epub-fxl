@@ -1,0 +1,2741 @@
+#!/usr/bin/env python3
+
+# based on hocr-svg
+
+# TODO add inverse operation: convert epub to hocr files
+
+# TODO epub-fxl-editor-qt based on https://github.com/milahu/hocr-editor-qt
+# or a browser-based editor
+
+# TODO add page "full text" similar to "all pages"
+# but without page images, and text-color:black
+
+# TODO "all pages" should lazy-load images
+# but that should not break printing
+
+# TODO detect vertical text, add transform rotate 90 degrees
+
+# TODO reader shows dark mode, "all pages" shows light mode
+
+# TODO reader menu is too small in firefox
+
+# TODO store the lightness value of each page
+# so we can dynamically enforce lightmode / darkmode for all pages
+# see also https://github.com/milahu/hocr-files-template-repo
+# 070-deskew.lightness.txt
+# 067-force-lightmode.py
+
+# TODO fit width by default
+# with mobile browsers, we cannot zoom out of the page iframe
+# FIXME mobile browsers have no "zoom out" = minimum zoom level is 100%
+# TODO implement zoom in javascript and CSS `transform: scale(...)`
+
+# TODO add lang attribute: <html lang="xxx">
+
+# TODO add scripts: git2epub.py epub2git.py update.py
+
+# TODO add scripts: serve_http.py
+# because hypothesis annotations dont work over the file protocol
+
+# TODO add option to handle end-of-line-hyphens
+# <span>hy</span><span>phen</span>
+
+# TODO add inverse operation: convert epub to hocr files
+
+# FIXME CPU load jumps between 100% and 600%
+# probably 600% for im.save(format="AVIF")
+# and 100% for what?
+# the 100% phases take around 5 seconds per page
+
+import os
+import re
+import io
+import sys
+import zlib
+import math
+import json
+import base64
+import argparse
+import mimetypes
+import zipfile
+import datetime
+import traceback
+from xml.sax.saxutils import escape
+from concurrent.futures import ProcessPoolExecutor, as_completed
+import importlib.resources
+import urllib.parse
+import time
+from pathlib import Path
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+
+from hocr.parse import hocr_page_iterator
+from hocr.parse import hocr_page_to_word_data
+from hocr.text import hocr_page_text
+from hocr.text import hocr_word_data_bbox
+
+import PIL.features
+from PIL import Image
+from PIL import ImageFilter
+from tqdm import tqdm
+import psutil
+import numpy as np
+import doxapy
+
+
+from tqdm import tqdm as original_tqdm
+
+class tqdm(original_tqdm):
+    """
+    use CPU time instead of wall-clock time
+    https://github.com/tqdm/tqdm/issues/1748
+    """
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        
+        # Override the time function to CPU time
+        self._time = time.process_time
+        
+        # Reset start time to CPU clock
+        self.start_t = self._time()
+        self.last_print_t = self.start_t
+
+    def reset(self, total=None):
+        super().reset(total=total)
+        self.start_t = self._time()
+        self.last_print_t = self.start_t
+
+
+hocrfile_extensions = ("hocr", "html", "xhtml")
+
+# no. binary page mode is too lossy.
+# characters can look aliased/jagged
+# After downsampling from 600 dpi to 150 dpi and converting the image to bitonal,
+# glyph contours become aliased,
+# producing one-pixel stair-step artifacts along edges that were originally straight.
+# we cannot use binary/bitonal group4 images in most browsers anyway
+# and we cannot use group4-polyfill over the file protocol
+# DEFAULT_PAGE_MODE = "binary"
+DEFAULT_PAGE_MODE = "grayscale"
+PAGE_MODE_VALUES = (
+    "binary",
+    "grayscale",
+    "color",
+)
+
+# use imagemagick to compare avif qualities around 20%
+r'''
+src=001.tiff;
+for (( q=10; q<=30; q++ )); do
+    dst="$src".magick.s50.q$(printf %03d "$q").avif;
+    [ -e "$dst" ] && continue;
+    magick "$src" -scale 50% -quality ${q}% \
+        -define heic:lossless=true \
+        -define heic:chroma-subsample=4:4:4 \
+        -define heic:speed=0 \
+        "$dst";
+done
+'''
+
+DEFAULT_IMAGE_FORMAT = "avif"
+# DEFAULT_BINARY_IMAGE_FORMAT = "avif"
+# DEFAULT_GRAYSCALE_IMAGE_FORMAT = "avif"
+# DEFAULT_COLOR_IMAGE_FORMAT = "avif"
+
+# TODO do your own benchmarking and tuning
+# note: smaller image file size can have worse visual quality
+
+DEFAULT_BINARY_IMAGE_QUALITY = 20
+DEFAULT_GRAYSCALE_IMAGE_QUALITY = 40
+DEFAULT_COLOR_IMAGE_QUALITY = 60
+
+DEFAULT_BINARY_IMAGE_SAVE_SPEED = 6
+DEFAULT_GRAYSCALE_IMAGE_SAVE_SPEED = 6
+DEFAULT_COLOR_IMAGE_SAVE_SPEED = 6
+
+DEFAULT_BINARY_IMAGE_ALGO = "sauvola"
+
+# low values produce blurry characters
+# high values produce sharp characters
+# this is visible in very small characters
+# for example a "registered trademark symbol" in superscript
+DEFAULT_BINARY_IMAGE_THRESHOLD_SENSITIVITY = 0.8
+
+# no. throw later
+# if not PIL.features.check(DEFAULT_IMAGE_FORMAT):
+#     DEFAULT_IMAGE_FORMAT = "webp"
+#     raise "TODO benchmark and tune webp compression"
+# assert PIL.features.check(DEFAULT_IMAGE_FORMAT), f"PIL does not support image_format {DEFAULT_IMAGE_FORMAT!r}"
+
+WEBP_METHOD = 6
+
+# both HTML and SVG support searchable text
+# but in HTML we must use relative word positions
+# which break in some browsers
+# parameter: text-html-relative-word-positions
+# https://stackoverflow.com/questions/62381455
+# https://github.com/milahu/chromium-discuss-text-search-absolute-position-spans
+
+# only HTML supports markup tags like
+#   <b>bold</b>
+#   <i>italics</i>
+#   <u>underline</u>
+#   <sup>superscript</sup>
+#   <sub>subscript</sub>
+#   ...
+#   but we dont need to render such markup in the *invisible* text layer
+#   so we dont need the svg foreignObject element to embed html or mathml
+#   this only breaks search across tag boundaries
+#   for example searching for "H2O" fails on "H<sub>2</sub>O"
+#   we could fix this by removing html tags
+#   and storing the original string in a data attribute like
+#   <span data-src="H<sub>2</sub>O">H2O</span>
+#   so the transform from hocr to svg is as lossless as possible
+
+# use HTML by default for
+#   markup tags
+#   hypothesis annotations
+#     SVG annotations are blocked by https://github.com/hypothesis/h/issues/9990
+#   clipboard text in firefox
+
+DEFAULT_TEXT_FORMAT = "xhtml"
+TEXT_FORMAT_LIST = ["svg", "xhtml"]
+
+media_type_by_text_format = {
+    "xhtml": "application/xhtml+xml",
+    "svg": "image/svg+xml",
+}
+
+resample_map = {
+    "nearest": Image.NEAREST,
+    "bilinear": Image.BILINEAR,
+    "lanczos": Image.LANCZOS, # artifacts
+}
+
+binarize_algo_map = {
+    "otsu": doxapy.Binarization.Algorithms.OTSU,
+    "niblack": doxapy.Binarization.Algorithms.NIBLACK,
+    "sauvola": doxapy.Binarization.Algorithms.SAUVOLA,
+    "wolf": doxapy.Binarization.Algorithms.WOLF,
+}
+
+default_max_workers = psutil.cpu_count(logical=False) or 1
+max_max_workers = psutil.cpu_count() or 1 # number of CPU threads
+
+
+# --- Helper: level adjustment (contrast stretch) -----------------------------
+def apply_color_levels(img: np.ndarray|Image.Image, low: float = 0.2, high: float = 0.9) -> np.ndarray:
+    """
+    Apply a linear color level adjustment using fractional thresholds.
+    low/high are in [0,1], e.g., 0.2 = 20%, 0.9 = 90%.
+    """
+    was_pil_image = False
+    if isinstance(img, Image.Image):
+        was_pil_image = True
+        img = np.array(img) # PIL.Image to np.array # TODO avoid
+    if img.dtype == np.uint8:
+        max_val = 255
+    elif img.dtype == np.uint16:
+        max_val = 65535
+    else:
+        raise ValueError(f"Unsupported image dtype: {img.dtype}")
+
+    # Convert fractional thresholds to absolute values
+    low_val = low * max_val
+    high_val = high * max_val
+
+    if high_val <= low_val:
+        return img.copy()
+
+    img_stretched = (img.astype(float) - low_val) * (max_val / (high_val - low_val))
+    img_stretched = np.clip(img_stretched, 0, max_val)
+    img_stretched = img_stretched.astype(img.dtype)
+    if was_pil_image:
+        img_stretched = Image.fromarray(img_stretched) # np.array to PIL.Image # TODO avoid
+    return img_stretched
+
+
+# --- top-level page processor ---
+def process_page(hocrfile, args):
+    """Process a single hOCR page: compress WebP (cached) and build SVG."""
+    # assert PIL.features.check(args.image_format), f"PIL does not support image_format {args.image_format!r}"
+
+    # --- parse HOCR ---
+    page = None
+    page_w, page_h = None, None
+    for page_elem in hocr_page_iterator(hocrfile):
+        page = hocr_page_to_word_data(page_elem)
+        break # FIXME dont assume single-page hocr files
+
+    # --- find page image ---
+    page_image_path = None
+    with open(hocrfile, "rb") as f:
+        if m := re.search(rb'''<div class='ocr_page'.*?title='image "([^"]+)"''', f.read()):
+            page_image_path = os.path.join(os.path.dirname(hocrfile), m.group(1).decode("utf8"))
+    if not page_image_path or not os.path.exists(page_image_path):
+        raise ValueError(f"Missing page image for {hocrfile}")
+        pass
+
+    page_base = get_page_base(hocrfile)
+
+    page_num = get_page_num(page_base)
+
+    page_mode = get_page_mode(page_num, args)
+
+    is_binary_page = (page_mode == "binary")
+    is_grayscale_page = (page_mode == "grayscale")
+    is_color_page = (page_mode == "color")
+
+    if is_grayscale_page:
+        image_format = args.grayscale_image_format
+        image_save_speed = args.grayscale_image_save_speed
+        quality = args.grayscale_image_quality
+        depth = 8
+        image_mode = "L"
+    elif is_color_page:
+        image_format = args.color_image_format
+        image_save_speed = args.color_image_save_speed
+        quality = args.color_image_quality
+        depth = 24
+        image_mode = "RGB"
+    else: # binary page
+        # in HTML, we cannot use TIFF images with CCITT-G4 compression
+        # because most web browsers dont support it
+        # (but they do support PDF with CCITT-G4 images...)
+        # so the next-best option is AVIF
+        # https://github.com/Fyrd/caniuse/issues/4281
+        # https://github.com/milahu/group4-polyfill
+        # image_format = "avif"
+        image_format = args.binary_image_format
+        image_save_speed = args.binary_image_save_speed
+        quality = args.binary_image_quality
+        depth = 1
+        image_mode = "1"
+
+    if image_format == "png":
+        quality = 0
+
+    # TODO maybe add more parameters to the image path for cache validity
+    # the image path should reflect all config values
+    path_parts = [
+        page_image_path,
+        f"q{quality}",
+        f"d{depth}",
+        f"s{args.scale}",
+        f"cl{args.image_color_levels or '0x100'}",
+        f"sp{image_save_speed}",
+        f"sen{args.binary_image_threshold_sensitivity}",
+        f"win{args.binary_image_window_size}",
+    ]
+    # if args.crop_pages:
+    #     path_parts += [f"crop{args.crop_pages}"]
+    path_parts += [image_format]
+    cached_page_image_path = ".".join(path_parts)
+
+    # --- check image cache ---
+    getmtime = os.path.getmtime
+    if args.ignore_cached_images and os.path.exists(cached_page_image_path):
+        os.unlink(cached_page_image_path)
+    if os.path.exists(cached_page_image_path) and getmtime(cached_page_image_path) > getmtime(page_image_path):
+        # read cache
+        with open(cached_page_image_path, "rb") as f:
+            img_data = f.read()
+        im = Image.open(cached_page_image_path)
+        page_w, page_h = im.size
+        im.close()
+        del im
+    elif page_image_path and os.path.exists(page_image_path):
+        # write cache
+        # compress page image
+        im = Image.open(page_image_path)
+        # if args.crop_pages:
+        #     m = re.match(r"^(\d+)x(\d+)\+(\d+)\+(\d+)$", args.crop_pages)
+        #     width, height, left, upper = map(int, m.groups())
+        #     right = left + width # x2
+        #     lower = upper + height # y2
+        #     im = im.crop((left, upper, right, lower)) # x1, y1, x2, y2
+        page_w, page_h = im.size
+        if not is_color_page:
+            # grayscale or binarized
+            if im.mode not in ("1", "L"):
+                im = im.convert("L")
+                assert im.mode == "L", f"im.mode={im.mode}"
+        if args.scale != 1:
+            page_w = round(page_w * args.scale)
+            page_h = round(page_h * args.scale)
+            resample = resample_map.get(args.scale_resample)
+            im = im.resize((page_w, page_h), resample=resample)
+
+        if args.image_color_levels and args.image_color_levels != "0x100":
+            low_threshold, high_threshold = args.image_color_levels.split("x")
+            low_threshold = float(low_threshold) / 100
+            high_threshold = float(high_threshold) / 100
+            assert 0 <= low_threshold <= 1
+            assert 0 <= high_threshold <= 1
+            assert low_threshold < high_threshold
+            im = apply_color_levels(im, low_threshold, high_threshold)
+
+        if is_binary_page:
+            # binarize
+            if 0:
+                # no, this is too lossy
+                # this can wrongly join close areas as in "Ü"
+                # denoise
+                # assume: scale=1 -> 600 dpi, scale=0.5 -> 300 dpi
+                # at 300 dpi: text stroke: 2–4 px wide, noise speckles: 1 px
+                denoise_size = 5 if args.scale == 1 else 3
+                im = im.filter(ImageFilter.MedianFilter(size=denoise_size))
+            if 0:
+                # blur before binarize
+                input_dpi = 600 # TODO dont assume this
+                output_dpi = args.scale * input_dpi
+                blur_sigma = 0.3 * (output_dpi / 300)
+                blur_sigma = max(0.2, min(0.6, blur_sigma)) # clamp
+                im = im.filter(ImageFilter.GaussianBlur(blur_sigma))
+            # binarize
+            # based on https://github.com/milahu/binarize-pdf
+
+            # dt is around 0.01 seconds
+            im = np.array(im) # PIL.Image to np.array # TODO avoid
+
+            window_size = (
+                args.binary_image_window_size
+                or
+                get_adaptive_window_size(im.shape)
+            )
+            options = {
+                "window": window_size,
+                "k": args.binary_image_threshold_sensitivity,
+            }
+            algo = binarize_algo_map[args.binary_image_algo]
+
+            # dt is around 0.1 seconds
+            im = doxapy.to_binary(algo, im, options)
+
+            # dt is around 0.0001 seconds
+            im = Image.fromarray(im) # np.array to PIL.Image # TODO avoid
+
+            # surprise: doxapy.to_binary returns im.mode="L" not im.mode="1"
+            assert im.mode == "L", f"im.mode={im.mode}"
+            if im.mode != "1":
+                # convert to depth=1
+                im = im.convert("1", dither=Image.NONE)
+            if 0:
+                # blur after binarize
+                im = im.filter(ImageFilter.GaussianBlur(0.2))
+
+        buf = io.BytesIO()
+        im_save_kwargs = dict(
+            quality=quality,
+            lossless=False,
+            optimize=True,
+        )
+        if image_format == "avif":
+            im_save_kwargs["format"] = "AVIF"
+            # keep full color resolution
+            # prevent color bleeding around text
+            im_save_kwargs["subsampling"] = "4:4:4"
+            if im.mode in ("1", "L"): # binary or grayscale
+                # dont produce broken grayscale avif files
+                # https://issues.chromium.org/issues/362539762
+                im_save_kwargs["subsampling"] = "4:0:0"
+            # speed trades off encoding time vs. quality. 0–10. lower is better.
+            im_save_kwargs["speed"] = image_save_speed
+            im_save_kwargs["max_threads"] = args.jobs
+        elif image_format == "webp":
+            im_save_kwargs["format"] = "WEBP"
+            im_save_kwargs["method"] = WEBP_METHOD
+        elif image_format == "png":
+            im_save_kwargs["format"] = "PNG"
+            # quality has no effect
+            if "quality" in im_save_kwargs:
+                del im_save_kwargs["quality"]
+        elif image_format in ("jpg", "jpeg"):
+            im_save_kwargs["format"] = "JPEG"
+        elif image_format == "group4.tiff":
+            # Group4 compression in TIFF format
+            # Group4 is 120 times faster than AVIF with speed=6
+            im_save_kwargs["format"] = "TIFF"
+            im_save_kwargs["compression"] = "group4"
+            # produce a single strip
+            strip_size = math.ceil(im.width / 8) * im.height
+            im_save_kwargs["strip_size"] = strip_size
+            del im_save_kwargs["quality"]
+        else:
+            # raise ValueError(f"unknown image format {image_format!r}")
+            im_save_kwargs["format"] = image_format.upper()
+
+        # t1 = time.time()
+        # this takes by far the most CPU time
+        im.save(buf, **im_save_kwargs)
+        # print(f"im.save took {time.time() - t1} seconds")
+
+        img_data = buf.getvalue()
+        del buf
+        with open(cached_page_image_path, "wb") as f:
+            f.write(img_data)
+        im.close()
+        del im
+
+    # TODO? cleanup more float values
+    def cleanup_bbox(bbox):
+        bbox = list(bbox)
+        for idx, val in enumerate(bbox):
+            if int(val) == val:
+                val = int(val)
+            bbox[idx] = val
+        bbox = tuple(bbox)
+        return bbox
+
+    if args.scale == 1:
+        def scale_bbox(bbox):
+            return cleanup_bbox(bbox) # noop
+    else:
+        def scale_bbox(bbox):
+            x1, y1, x2, y2 = bbox
+            x1 = x1 * args.scale
+            x2 = x2 * args.scale
+            y1 = y1 * args.scale
+            y2 = y2 * args.scale
+            bbox = (x1, y1, x2, y2)
+            return cleanup_bbox(bbox)
+
+    epub_page_image_path = f"images/{page_base}.{image_format}"
+    if page_image_path is None:
+        epub_page_image_path = None
+        img_path = None
+        img_data = None
+
+    get_text_data_by_text_format = {
+        "xhtml": get_text_data_xhtml,
+        "svg": get_text_data_svg,
+    }
+    get_text_data = get_text_data_by_text_format[args.text_format]
+    try:
+        svg_data = get_text_data(
+            hocrfile,
+            page,
+            page_w,
+            page_h,
+            scale_bbox,
+            epub_page_image_path,
+            args,
+        )
+    except Exception as exc:
+        print()
+        print(f"failed to process hocrfile: {hocrfile}")
+        raise
+    del page
+
+    svg_path = f"OEBPS/{page_base}.{args.text_format}"
+    img_path = f"OEBPS/images/{page_base}.{image_format}"
+
+    # --- return file paths & data ---
+    return (svg_path, svg_data, img_path, img_data)
+
+
+def try_process_page(hocrfile, args):
+    "ensure all exceptions are caught and serialized safely back to the main process"
+    try:
+        return (True, process_page(hocrfile, args))
+    except Exception as e:
+        tb = traceback.format_exc()
+        return (False, (e, tb))
+
+
+def get_text_data_svg(
+        hocrfile,
+        page,
+        page_w,
+        page_h,
+        scale_bbox,
+        epub_page_image_path,
+        args,
+    ):
+
+    page_base = get_page_base(hocrfile)
+
+    # --- build SVG ---
+    svg_buf = io.StringIO()
+    svg_buf.write('<?xml version="1.0" encoding="UTF-8"?>\n')
+    svg_buf.write(
+        '<svg\n'
+        ' xmlns="http://www.w3.org/2000/svg"\n'
+        ' xmlns:xlink="http://www.w3.org/1999/xlink"\n'
+        ' xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns"\n'
+        ' xmlns:dc="http://purl.org/dc/elements/1.1/"\n'
+        ' xmlns:cc="http://creativecommons.org/ns"\n'
+        f' version="1.1" viewBox="0 0 {page_w} {page_h}"\n'
+        # no. this breaks zoom in iframe
+        # scale to fit width
+        # ' preserveAspectRatio="xMidYMid meet" style="width:100%; height:auto"\n'
+        f' width="{page_w}" height="{page_h}"\n'
+        # center the page horizontally
+        ' style="margin:auto"\n'
+        '>\n'
+    )
+
+    svg_buf.write('<metadata>\n')
+    svg_buf.write('<rdf:RDF>\n')
+
+    if args.canonical_url_base:
+        # set metadata: canonical URL
+        text_path = f"OEBPS/{page_base}.{args.text_format}"
+        canonical_url = urllib.parse.urljoin(args.canonical_url_base, text_path)
+        canonical_url = urllib.parse.quote(canonical_url, safe=":/?&+")
+        svg_buf.write(f'<cc:Work rdf:about="{canonical_url}">\n')
+        # svg_buf.write(f'<dc:identifier>{canonical_url}</dc:identifier>\n')
+    else:
+        svg_buf.write(f'<cc:Work rdf:about="">\n')
+
+    svg_buf.write('</cc:Work>\n')
+    svg_buf.write('</rdf:RDF>\n')
+    svg_buf.write('</metadata>\n')
+
+    svg_buf.write('<style type="text/css">\n')
+    svg_buf.write('text, tspan { dominant-baseline: mathematical; fill: transparent; }\n')
+    svg_buf.write('svg { background: #e2e2e2; }\n') # 90% white
+    # invert colors in dark mode
+    svg_buf.write('@media (prefers-color-scheme: dark) {\n')
+    svg_buf.write(' svg { background: #1b1b1b; }\n') # 10% white
+    svg_buf.write(' image { filter: invert(); }\n')
+    svg_buf.write('}\n')
+    svg_buf.write('</style>\n')
+    if epub_page_image_path:
+        svg_buf.write(
+            f'<image x="0" y="0" width="{page_w}" height="{page_h}" '
+            f'preserveAspectRatio="none" xlink:href="{epub_page_image_path}"/>\n'
+        )
+
+    if page is None: page = []
+
+    for paragraph in page:
+        first_line = paragraph["lines"][0]
+        x1, y1, x2, y2 = scale_bbox(first_line["bbox"])
+        # add empty line between paragraphs in clipboard text
+        # WONTFIX this works in chrome but not firefox
+        # firefox has no newlines in clipboard text
+        svg_buf.write(f'<text x="{x1}" y="{y1-1}" xml:space="preserve"> </text>\n')
+        if not args.text_svg_split_lines:
+            svg_buf.write(f'<text x="{x1}" y="{y1}">\n')
+        for line in paragraph["lines"]:
+            x1, y1, x2, y2 = scale_bbox(line["bbox"])
+            if args.text_svg_split_lines:
+                svg_buf.write(f'<text x="{x1}" y="{y1}">\n')
+            for word in line["words"]:
+                x1, y1, x2, y2 = scale_bbox(word["bbox"])
+                w = x2 - x1
+                h = y2 - y1
+                text_y = y1 + (h / 2)
+                text = escape(word["text"])
+                svg_buf.write(
+                    f'  <tspan x="{x1}" y="{text_y}" font-size="{h}px" '
+                    f'textLength="{w}" lengthAdjust="spacingAndGlyphs">{text}</tspan>\n'
+                )
+            if args.text_svg_split_lines:
+                svg_buf.write('</text>\n')
+        if not args.text_svg_split_lines:
+            svg_buf.write('</text>\n')
+    svg_buf.write('</svg>\n')
+    svg_data = svg_buf.getvalue().encode("utf-8")
+    del svg_buf
+    return svg_data
+
+
+def get_text_data_xhtml(
+        hocrfile,
+        page,
+        page_w,
+        page_h,
+        scale_bbox,
+        epub_page_image_path,
+        args,
+    ):
+
+    page_base = get_page_base(hocrfile)
+    page_num = get_page_num(page_base)
+
+    # --- build XHTML5 ---
+    html_buf = io.StringIO()
+    if args.debug:
+        debug_buf = io.StringIO()
+        debug_buf.write('<div id="debug">\n')
+        args_dict = dict(vars(args))
+        del args_dict["infiles"]
+        del args_dict["jobs"]
+        del args_dict["pages"]
+        del args_dict["append_pages"]
+        del args_dict["add_files"]
+        debug_buf.write('<!-- args = ' + json.dumps(args_dict, indent=2) + ' -->\n')
+
+    # EPUB3 supports XHTML5
+    html_buf.write('<?xml version="1.0" encoding="UTF-8"?>\n')
+    html_buf.write('<!DOCTYPE html>\n')
+    # TODO set metadata: lang
+    html_buf.write(f'<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">\n')
+    html_buf.write('<head>\n')
+    # set metadata: title
+    html_buf.write(f'<title>{escape(args.doc_title)} (page {page_num})</title>\n')
+    html_buf.write(f'<meta name="generator" content="hocr-to-epub-fxl" />\n')
+
+    if args.canonical_url_base:
+        # set metadata: canonical URL
+        text_path = f"OEBPS/{page_base}.{args.text_format}"
+        canonical_url = urllib.parse.urljoin(args.canonical_url_base, text_path)
+        canonical_url = urllib.parse.quote(canonical_url, safe=":/?&+")
+        html_buf.write(f'<link rel="canonical" href="{canonical_url}"/>\n')
+
+    # TODO refactor html style
+    html_buf.write('<style type="text/css">\n')
+
+    html_buf.write('* {\n')
+    html_buf.write(' margin: 0;\n')
+    html_buf.write(' padding: 0;\n')
+    html_buf.write(' font-size: 100%;\n') # h1, h2, ...
+    html_buf.write(' line-height: 100%;\n')
+    html_buf.write('}\n')
+    if args.text_html_relative_word_positions_dynamic_font_width:
+        html_buf.write('html {\n')
+        html_buf.write(' --c: 1px;\n') # character width scaling factor
+        html_buf.write('}\n')
+    html_buf.write('html, body {\n')
+    # html_buf.write(' width: 100%;\n')
+    # html_buf.write(' overflow-x: hidden;\n')
+    # html_buf.write(' height: 100%;\n')
+    html_buf.write('}\n')
+    html_buf.write('body {\n')
+    # background behind the page image
+    html_buf.write(' background: gray;\n')
+    html_buf.write('}\n')
+    html_buf.write('@media print {\n')
+    html_buf.write(' body {\n')
+    html_buf.write('  background: none;\n')
+    html_buf.write(' }\n')
+    html_buf.write('}\n')
+
+    html_buf.write('body {\n')
+    # html_buf.write(' outline: solid 10px red;\n') # debug # ok
+    html_buf.write(' width: 100%;\n') # fit iframe width
+    # html_buf.write(' overflow: hidden;\n') # no scrollbars
+    html_buf.write('}\n')
+
+    # div.page = page
+    html_buf.write(f'div.page {{\n')
+    # FIXME scale to fit width (at 100% browser zoom level)
+    # html_buf.write(' outline: solid 10px green;\n') # debug
+    html_buf.write(' position: relative;\n')
+    # makeRelativeSpans transforms absolute to relative word positions
+    # so with both relative and absolute word positions
+    # p elements can overflow the div.page element
+    # and create extra margin on the right side of the page element
+    html_buf.write(' overflow: hidden;\n')
+    # no. darkreader: Access to fetch at 'file:///x.avif' from origin 'null' has been blocked by CORS policy
+    # if epub_page_image_path:
+    #     html_buf.write(f' background: url("{epub_page_image_path}") no-repeat;\n')
+    #     html_buf.write(f' background-size: {page_w}px {page_h}px;\n')
+    #     # html_buf.write(' background-size: 100% 100%;\n')
+    html_buf.write(' transform-origin: top left;\n')
+    # not working. we cannot use 100vw here. this would require javascript
+    # html_buf.write(f' transform: scale(calc(100% / {page_w} * 100vw));\n') # scale to fit width
+    # html_buf.write(f' transform: scale(calc(100vw / {page_w}));\n') # scale to fit width
+    # html_buf.write(f' transform: scale(calc(100% / {page_h} * 100vh));\n') # scale to fit height
+    # html_buf.write(f' transform: scale(0.89);\n') # scale to fit width
+    html_buf.write(' margin: auto;\n') # center the page horizontally
+    html_buf.write('}\n')
+    # html_buf.write('div.page:hover {\n')
+    # html_buf.write(' outline: solid 1px black;\n')
+    # html_buf.write('}\n')
+
+    if 1:
+        html_buf.write('div.page > img.page {\n')
+        html_buf.write(' position: absolute;\n')
+        html_buf.write(' left: 0;\n')
+        html_buf.write(' top: 0;\n')
+        html_buf.write(' margin: 0;\n')
+        # exclude page images from clipboard
+        html_buf.write(' user-select: none;\n')
+        html_buf.write('}\n')
+
+    # # invert image colors in dark mode
+    # html_buf.write('@media (prefers-color-scheme: dark) {\n')
+    # html_buf.write(' div.page > img.page { filter: invert(); }\n')
+    # html_buf.write('}\n')
+
+    # div.p = paragraph
+    html_buf.write('div.p {\n')
+    if args.text_html_relative_word_positions:
+        html_buf.write(' position: absolute;\n')
+        html_buf.write(' white-space: nowrap;\n')
+    html_buf.write('}\n')
+
+    # div = line
+    # span = word
+    html_buf.write('div.p > div, span {\n')
+    html_buf.write(' display: inline;\n')
+    # html_buf.write(' display: inline-block;\n') # for transform:scaleX(...)
+    if args.text_html_relative_word_positions:
+        html_buf.write(' position: relative;\n')
+    else:
+        html_buf.write(' position: absolute;\n')
+    # transparent text layer
+    html_buf.write(' color: transparent;\n')
+    # html_buf.write(' font-family: sans-serif;\n')
+    # html_buf.write(' font-family: monospace;\n') # simplify scale_w calculation
+    html_buf.write(' white-space: nowrap;\n')
+    html_buf.write(' line-height: 1;\n')
+    html_buf.write(' transform-origin: left center;\n')
+    if args.text_html_relative_word_positions:
+        html_buf.write(' vertical-align: top;\n')
+    html_buf.write('}\n')
+
+    # invert image colors in dark mode
+    html_buf.write('@media (prefers-color-scheme: dark) {\n')
+    html_buf.write(' div.page { filter: invert(); }\n')
+    html_buf.write('}\n')
+
+    # monospace fonts have an average character aspect ratio of 6:10
+    # https://stackoverflow.com/a/19114963/10440128
+    # for cross-platform consistent font-width, we would need to define a font-face with a font file (woff2)
+    # font-family: Courier; # aspect: 0.600095 = 1229 / 2048 = 0.60009765625
+    # font-family: monospace; # aspect: 0.60205 = 1233 / 2048 = 0.60205078125
+    # w_char, h_char = 6, 10
+    # w_char, h_char = 1233, 2048 # monospace -> computed font-family: Hack
+    # w_char, h_char = 1204, 2048 # monospace in firefox on linux # Liberation Mono?
+
+    w_char, h_char = 1233, 2048 # monospace -> computed font-family: Hack
+    font_family = "monospace"
+
+    if args.text_html_bundle_font:
+        font_family = "Cousine" # monospace font in tor-browser
+        # font_family = "Hack" # monospace font on my system
+
+    if font_family == "monospace":
+        # use system font
+        # NOTE different browsers and platforms have different default monospace fonts
+        # so w_char is not constant across browsers and platforms
+        w_char, h_char = 1233, 2048 # TODO what font
+        html_buf.write("div.p, div.p > div, span {\n")
+        html_buf.write(" font-family: monospace;\n") # simplify scale_w calculation
+        # force truly fixed advance widths
+        html_buf.write(" font-variant-ligatures: none;\n")
+        html_buf.write(" font-feature-settings: 'liga' 0;\n")
+        html_buf.write(" font-kerning: none;\n")
+        html_buf.write("}\n")
+    else:
+        # use custom font
+        # FIXME add font file to epub output
+        html_buf.write("@font-face {\n")
+        html_buf.write(f" font-family: '{font_family}';\n")
+        if font_family == "Cousine":
+            w_char, h_char = 1200, 2048
+            # w_char, h_char = 1821, 2048 # chrome # FIXME why is this different from firefox
+            # https://fonts.google.com/specimen/Cousine
+            # https://en.bestfonts.pro/font/cousine
+            html_buf.write(" src: url(./Cousine-Regular.woff2) format('woff2');\n")
+        elif font_family == "Hack":
+            w_char, h_char = 1204.105224609375, 2048
+            # https://github.com/source-foundry/Hack/releases/download/v3.003/Hack-v3.003-webfonts.zip
+            html_buf.write(" src: url(./hack-regular.woff2) format('woff2');\n")
+        else:
+            raise ValueError(f"unknown font_family {font_family!r}")
+        html_buf.write(" font-style: normal;\n")
+        html_buf.write(" font-weight: 400;\n")
+        # html_buf.write(" unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+2000-206F, U+2074, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;\n")
+        html_buf.write("}\n")
+        html_buf.write("*, body, div.p, div.p > div, span {\n")
+        html_buf.write(f" font-family: '{font_family}';\n") # simplify scale_w calculation
+        html_buf.write("}\n")
+
+    paragraph_font_size = 16 # arbitrary. needed for space size calculations
+
+    paragraph_space_width = paragraph_font_size / h_char * w_char
+
+    # TODO implement zoom in javascript and CSS `transform: scale(...)`
+    # html_buf.write('div.page { transform: scale(0.5); transform-origin: top center; }\n')
+
+    html_buf.write('</style>\n')
+
+    if args.text_html_relative_word_positions_dynamic_font_width:
+        # dynamically scale the text positions with var(--c)
+        # FIXME run this only once in the "all pages" index.xhtml
+        html_buf.write('<script type="application/javascript">\n')
+        html_buf.write('// <![CDATA[\n')
+        html_buf.write("if (1) {\n")
+        html_buf.write("    const canvas = document.createElement('canvas');\n")
+        html_buf.write("    const measure = canvas.getContext('2d');\n")
+        html_buf.write(f"    measure.font = '2048px {font_family}';\n")
+        html_buf.write("    const charWidth = measure.measureText('M').width;\n")
+        if 0:
+            # check constant char width
+            import string
+            letters_list = list(string.ascii_letters + string.digits + ",.-+#*~'\"!?`´^°§$%&/()[]{}= ")
+            html_buf.write(f"    const allChars = {letters_list};\n")
+            html_buf.write("    for (let char of allChars) {\n")
+            html_buf.write("        const thisCharWidth = measure.measureText(char).width;\n")
+            html_buf.write("        if (thisCharWidth != charWidth) {\n")
+            html_buf.write("            console.log(`non-monospace char width: ${char} -> ${thisCharWidth}`);\n")
+            html_buf.write("        }\n")
+            html_buf.write("    }\n")
+        html_buf.write("    canvas.remove();\n")
+        html_buf.write(f"    const charWidthFactor = {w_char} / charWidth;\n")
+        html_buf.write("    console.log(`character aspect ratio: ${charWidth}:2048 -> charWidthFactor: ${charWidthFactor}`);\n")
+        html_buf.write(f"    if (charWidth != {w_char}) {{\n")
+        html_buf.write("        // <html style='--c: 123px'>\n")
+        html_buf.write("        document.documentElement.style.setProperty('--c', `${charWidthFactor}px`);\n")
+        html_buf.write("    }\n")
+        html_buf.write("}\n")
+        html_buf.write('// ]]>\n')
+        html_buf.write("</script>\n")
+
+    if not args.text_html_relative_word_positions and args.text_html_force_word_spacing:
+        # detect user agent
+        html_buf.write('<script type="application/javascript">\n')
+        html_buf.write('// <![CDATA[\n')
+        html_buf.write("if (!globalThis._userAgentDetectionIsDone) {\n")
+        html_buf.write("globalThis._userAgentDetectionIsDone = true;\n")
+        html_buf.write("(() => {\n")
+        html_buf.write("  const ua = navigator.userAgent;\n")
+        # TODO better check?
+        html_buf.write("  if (ua.includes('Firefox')) { console.log('user agent is Firefox'); globalThis._userAgentIsFirefox = true; return; }\n")
+        html_buf.write("  if (ua.includes('Edg')) { console.log('user agent is Edge'); globalThis._userAgentIsEdge = true; return; }\n")
+        html_buf.write("  if (ua.includes('Chrome')) { console.log('user agent is Chrome'); globalThis._userAgentIsChrome = true; return; }\n")
+        html_buf.write("  if (ua.includes('Safari')) { console.log('user agent is Safari'); globalThis._userAgentIsSafari = true; return; }\n")
+        html_buf.write("})();\n")
+        html_buf.write("}\n")
+        # dynamically modify the html document
+        html_buf.write("if (!globalThis._DOMContentLoadedEventListenerIsAdded) {\n")
+        html_buf.write("globalThis._DOMContentLoadedEventListenerIsAdded = true;\n")
+        html_buf.write("document.addEventListener('DOMContentLoaded', () => {\n")
+        # undo: add space between words in clipboard text
+        # TODO do this for more browsers?
+        html_buf.write("  if (globalThis._userAgentIsFirefox) {\n")
+        # NOTE &#160; in XHTML = &nbsp; in HTML
+        html_buf.write("    console.log('removing &#160; after words to fix clipboard text');\n")
+        html_buf.write("    for (const span of document.querySelectorAll('span')) {\n")
+        # some spans end with "<br/>"
+        html_buf.write("      if (span.innerHTML.slice(-1) != '\\xa0') continue;\n")
+        html_buf.write("      span.innerHTML = span.innerHTML.slice(0, -1);\n")
+        html_buf.write("    }\n")
+        html_buf.write("  }\n")
+        html_buf.write("});\n")
+        html_buf.write("}\n")
+        html_buf.write('// ]]>\n')
+        html_buf.write("</script>\n")
+
+    if not args.text_html_relative_word_positions:
+        html_buf.write('<script type="application/javascript" class="pragma-once">\n')
+        html_buf.write('// <![CDATA[\n')
+        # define function makeRelativeSpans
+        makeRelativeSpans_js_str = importlib.resources.read_text("hocr", "data/makeRelativeSpans.min.js")
+        html_buf.write(makeRelativeSpans_js_str + "\n")
+        # TODO expose the parameters joinLines and addSoftHyphens to the GUI
+        html_buf.write("let joinLines = 1;\n")
+        html_buf.write("let addSoftHyphens = 1;\n")
+        html_buf.write("document.addEventListener('DOMContentLoaded', () => makeRelativeSpans(joinLines, addSoftHyphens));\n")
+        # define constants for fitToWidth: pageBase, pageWidth, pageHeight
+        html_buf.write(f'const pageBase="{page_base}",pageWidth={page_w},pageHeight={page_h};\n')
+        if args.debug:
+            # debug: use the non-minified script
+            fitToWidth_js_str = importlib.resources.read_text("hocr", "data/fitToWidth.js")
+        else:
+            fitToWidth_js_str = importlib.resources.read_text("hocr", "data/fitToWidth.min.js")
+        html_buf.write(fitToWidth_js_str)
+        html_buf.write('window.addEventListener("load", fitToWidth);\n')
+        html_buf.write('window.addEventListener("resize", fitToWidth);\n')
+        html_buf.write('// ]]>\n')
+        html_buf.write("</script>\n")
+
+    html_buf.write('</head>\n')
+    html_buf.write('<body>\n')
+    html_buf.write(f'<div class="page" id="page-{page_base}" style="width: {page_w}px; height: {page_h}px">\n')
+
+    # img.page
+    if epub_page_image_path:
+        # TODO why no background image
+        # fix: darkreader: Access to fetch at 'file:///x.avif' from origin 'null' has been blocked by CORS policy
+        html_buf.write(f'<img class="page" alt="" src="{epub_page_image_path}" style="width: {page_w}px; height: {page_h}px"/>\n')
+
+    if page is None: page = []
+
+    last_paragraph_idx = len(page) - 1
+    for paragraph_idx, paragraph in enumerate(page):
+        if len(paragraph["lines"]) == 0: continue
+        x1, y1, x2, y2 = scale_bbox(get_bbox_of_paragraph(paragraph))
+        html_buf.write(f'<div class="p" style="left:{x1}px;top:{y1}px;font-size:{paragraph_font_size}px">\n')
+        if args.debug:
+            debug_buf.write(f'<div style="position:absolute;left:{x1}px;top:{y1}px;width:{x2 - x1}px;height:{y2 - y1}px;outline:dotted 1px green"></div>\n')
+        # cursor_x1, cursor_y1 = 0, 0 # relative to paragraph
+        paragraph_x1, paragraph_y1 = x1, y1
+        cursor_x1, cursor_y1 = x1, y1
+        last_line_idx = len(paragraph["lines"]) - 1
+        for line_idx, line in enumerate(paragraph["lines"]):
+            x1, y1, x2, y2 = scale_bbox(line["bbox"])
+            if args.text_html_join_words:
+                # note: this is lossy. word positions are lost
+                w = x2 - x1
+                h = y2 - y1
+                len_line = sum([len(word["text"]) + 1 for word in line["words"]]) - 1
+                scale_w = (w / w_char) / (h / h_char) / len_line
+                html_buf.write(f'<div style="left:{x1}px;top:{y1}px;font-size:{h}px;transform:scaleX({scale_w})">')
+                for word_idx, word in enumerate(line["words"]):
+                    # text = escape(word["text"])
+                    text = word["html"]
+                    if word_idx > 0:
+                        html_buf.write(" ")
+                    html_buf.write(text)
+                if line_idx == last_line_idx: # last line in paragraph
+                    html_buf.write('<br/>')
+                html_buf.write('<br/>')
+                html_buf.write('</div>\n')
+                continue
+            # html_buf.write(f'<div>\n')
+            last_word_idx = len(line["words"]) - 1
+            for word_idx, word in enumerate(line["words"]):
+                x1, y1, x2, y2 = scale_bbox(word["bbox"])
+                x1_rel = x1 - cursor_x1
+                y1_rel = y1 - cursor_y1
+                w = x2 - x1
+                h = y2 - y1
+                scale_w = (w / w_char) / (h / h_char) / len(word["text"])
+                letter_spacing = (w - (h / h_char * w_char * len(word["text"]))) / len(word["text"])
+                # FIXME why? this just works with font_family == "monospace"
+                if font_family == "Hack":
+                    letter_spacing = ((w * 0.981) - (h / h_char * w_char * len(word["text"]))) / len(word["text"])
+                space_width = h / h_char * w_char
+
+                # NOTE when word["html"] contains a superscript like
+                # aaa<sup>bbb</sup>ccc
+                # then the y1 position is the top of the superscript
+                # and the normal text is moved down
+                # https://stackoverflow.com/questions/1530685
+                # here we cannot change the font-size
+                # because that would break positions of following words
+
+                # text = escape(word["text"])
+                text = word["html"]
+
+                if not args.text_html_relative_word_positions and args.text_html_force_word_spacing:
+                    if word_idx < last_word_idx or line_idx < last_line_idx:
+                        if not args.text_html_join_lines and word_idx == last_word_idx: # last word in line
+                            pass
+                        else:
+                            # add space between words in clipboard text
+                            # NOTE this is needed for chrome but not for firefox (etc)
+                            # this is removed for some browsers in DOMContentLoaded
+                            # here we err on the side of "too many spaces"
+                            # when javascript is disabled
+                            # NOTE &#160; in XHTML = &nbsp; in HTML
+                            text += "&#160;"
+
+                if word_idx == last_word_idx: # last word in line
+                    if not args.text_html_join_lines:
+                        # text += "<br/>"
+                        delta_y1 = 10
+                        if line_idx < last_line_idx:
+                            # change the font-size of <br/>
+                            # so the next line's first word has top:0px
+                            # note: word positions are relative to their paragraph
+                            # so we dont need to change the font-size of other <br/>
+                            # TODO? use margin-bottom to avoid changing the line-height
+                            # to get prettier text-selection highlight in chrome
+                            next_line = paragraph["lines"][line_idx + 1]
+                            this_line_y1 = scale_bbox(line["words"][0]["bbox"])[1]
+                            next_line_y1 = scale_bbox(next_line["words"][0]["bbox"])[1]
+                            delta_y1 = next_line_y1 - this_line_y1
+                        if args.text_html_relative_word_positions_dynamic_font_width:
+                            # dynamically scale the text positions with var(--c)
+                            text += f'</span><span style="left:calc({x1_rel}*var(--c));font-size:{delta_y1}px"><br/>'
+                        else:
+                            text += f'</span><span style="left:{x1_rel}px;font-size:{delta_y1}px"><br/>'
+                    if line_idx == last_line_idx: # last line in paragraph
+                        text += "<br/>"
+                    if line_idx == last_line_idx and paragraph_idx == last_paragraph_idx: # last paragraph in page
+                        text += "<br/><br/>"
+
+                if 0:
+                    # debug
+                    html_buf.write(f'<!--   cursor_x1: {cursor_x1} -->\n')
+                    html_buf.write(f'<!--   cursor_y1: {cursor_y1} -->\n')
+                    html_buf.write(f'<!--          x1: {x1} -->\n')
+                    html_buf.write(f'<!--          y1: {y1} -->\n')
+                    html_buf.write(f'<!--          x2: {x2} -->\n')
+                    html_buf.write(f'<!--          y2: {y2} -->\n')
+                    html_buf.write(f'<!--           w: {w} -->\n')
+                    html_buf.write(f'<!--           h: {h} -->\n')
+                    html_buf.write(f'<!-- space_width: {space_width} -->\n')
+
+                if args.text_html_relative_word_positions:
+                    # ch_per_px = 22.5
+                    # ch_per_px = h * 0.6018
+                    # em_per_px = 15
+                    # html_buf.write(f'<span style="left:{x1_rel}px;top:{y1_rel}px;font-size:{h}px"><span style="transform:scaleX({scale_w})">{text}</span></span>\n')
+                    # html_buf.write(f'<span style="left:{x1_rel}px;top:{y1_rel}px;font-size:{h}px;font-stretch:{scale_w}">{text}</span>\n')
+                    # ok
+                    # html_buf.write(f'<span style="left:{x1_rel}px;top:{y1_rel}px;font-size:{h}px;letter-spacing:{letter_spacing}px">{text}</span>\n')
+                    # no. positions are wrong...
+                    # html_buf.write(f'<span style="left:{x1_rel/ch_per_px}ch;top:{y1_rel}px;font-size:{h}px;letter-spacing:{letter_spacing}px">{text}</span>\n')
+                    # no. positions are wrong...
+                    # html_buf.write(f'<span style="left:{x1_rel/em_per_px}em;top:{y1_rel}px;font-size:{h}px;letter-spacing:{letter_spacing}px">{text}</span>\n')
+
+                    # this works with:
+                    # chromium on linux
+                    # librewolf on linux
+
+                    # this breaks with:
+                    # tor-browser on linux
+                    # chrome on android
+                    # adblockbrowser on android (based on chrome)
+
+                    # todo:
+                    # firefox on android
+                    # chrome on windows
+                    # firefox on windows
+
+                    if args.text_html_relative_word_positions_dynamic_font_width:
+                        # dynamically scale the text positions with var(--c)
+                        html_buf.write(f'<span style="left:calc({x1_rel}*var(--c));top:{y1_rel}px;font-size:{h}px;letter-spacing:{letter_spacing}px">{text}</span>\n')
+                    else:
+                        html_buf.write(f'<span style="left:{x1_rel}px;top:{y1_rel}px;font-size:{h}px;letter-spacing:{letter_spacing}px">{text}</span>\n')
+                else:
+                    html_buf.write(f'<span style="left:{x1}px;top:{y1}px;font-size:{h}px;transform:scaleX({scale_w})">{text}</span>\n')
+
+                if args.debug:
+                    # debug_buf.write(f'<div style="position:absolute;left:{cursor_x1}px;top:{cursor_y1}px;width:10px;height:50px;background-color:green;opacity:0.5"></div>\n')
+                    debug_buf.write(f'<div style="position:absolute;left:{x1}px;top:{y1}px;width:{w}px;height:{h}px;outline:solid 1px red"></div>\n')
+
+                paragraph_space_width = paragraph_font_size / h_char * w_char
+
+                cursor_x1 = cursor_x1 + w + paragraph_space_width
+
+                if word_idx == last_word_idx: # last word in line
+                    if not args.text_html_join_lines:
+                        cursor_x1 = paragraph_x1
+                        if line_idx < last_line_idx:
+                            next_line = paragraph["lines"][line_idx + 1]
+                            next_line_y1 = scale_bbox(next_line["words"][0]["bbox"])[1]
+                            cursor_y1 = next_line_y1
+
+            # html_buf.write('</div>\n')
+        html_buf.write(f'</div>\n')
+    html_buf.write('</div>\n') # close <div class="page"
+    html_buf.write('</body>\n')
+    html_buf.write('</html>\n')
+    html_data = html_buf.getvalue()
+    if args.debug:
+        debug_buf.write('</div>\n')
+        html_data = re.sub(
+            r'<div class="page" (.+?)>\n',
+            r'<div class="page" \1>\n' + debug_buf.getvalue(),
+            html_data
+        )
+    html_data = html_data.encode("utf-8")
+    del html_buf
+    return html_data
+
+
+def get_page_base(hocrfile):
+    page_base = os.path.basename(hocrfile)
+    # TODO handle more hocr file extensions
+    page_base = re.sub(r"\.hocr(\.html|\.xhtml)?$", "", page_base, flags=re.I)
+    return page_base
+
+
+def get_bbox_of_page(page):
+    if page is None:
+        return None
+    X1 = Y1 = +math.inf
+    X2 = Y2 = -math.inf
+    for paragraph in page:
+        b = get_bbox_of_paragraph(paragraph)
+        if not b: continue
+        x1, y1, x2, y2 = b
+        if x1 < X1: X1 = x1
+        if y1 < Y1: Y1 = y1
+        if x2 > X2: X2 = x2
+        if y2 > Y2: Y2 = y2
+    if [X1, Y1, X2, Y2] == [+math.inf, +math.inf, -math.inf, -math.inf]:
+        return None
+    return [X1, Y1, X2, Y2]
+
+
+def get_bbox_of_paragraph(paragraph):
+    if paragraph is None or len(paragraph["lines"]) == 0:
+        return None
+    X1 = Y1 = +math.inf
+    X2 = Y2 = -math.inf
+    for line in paragraph["lines"]:
+        b = get_bbox_of_line(line)
+        if not b: continue
+        x1, y1, x2, y2 = b
+        if x1 < X1: X1 = x1
+        if y1 < Y1: Y1 = y1
+        if x2 > X2: X2 = x2
+        if y2 > Y2: Y2 = y2
+    if [X1, Y1, X2, Y2] == [+math.inf, +math.inf, -math.inf, -math.inf]:
+        return None
+    return [X1, Y1, X2, Y2]
+
+
+def get_bbox_of_line(line):
+    if line is None or len(line["words"]) == 0:
+        return None
+    X1 = Y1 = +math.inf
+    X2 = Y2 = -math.inf
+    for word in line["words"]:
+        b = word["bbox"]
+        if not b: continue
+        x1, y1, x2, y2 = b
+        if x1 < X1: X1 = x1
+        if y1 < Y1: Y1 = y1
+        if x2 > X2: X2 = x2
+        if y2 > Y2: Y2 = y2
+    if [X1, Y1, X2, Y2] == [+math.inf, +math.inf, -math.inf, -math.inf]:
+        return None
+    return [X1, Y1, X2, Y2]
+
+
+# --- check if path is an image ---
+def is_image_path(path):
+    _type = mimetypes.guess_file_type(path)[0]
+    return _type and _type.startswith("image/")
+
+
+class UnpackedZipFileWriter:
+    """A drop-in replacement for zipfile.ZipFile that writes unpacked files and preserves file mode."""
+    def __init__(self, output_dir, mode="w", *args, **kwargs):
+        self.output_dir = output_dir
+        self.mode = mode
+        # NOTE this throws if output_dir exists and is a file
+        # FileExistsError: [Errno 17] File exists: 'somefile'
+        os.makedirs(output_dir, exist_ok=True)
+
+    def _get_arcname_mode(self, arcname):
+        """Return (filename, mode) from str or ZipInfo."""
+        if isinstance(arcname, zipfile.ZipInfo):
+            file_info = arcname
+            filename = file_info.filename
+            # extract mode from external_attr (upper 16 bits for Unix)
+            mode = (file_info.external_attr >> 16) & 0o7777
+            if mode == 0:
+                mode = 0o644  # default mode if none set
+            return filename, mode
+        else:
+            filename = arcname
+            mode = None
+            return filename, mode
+
+    def writestr(self, arcname, data, compress_type=None):
+        arcname, mode = self._get_arcname_mode(arcname)
+        mode = mode or 0o644  # default mode
+        file_path = os.path.join(self.output_dir, arcname)
+        os.makedirs(os.path.dirname(file_path), exist_ok=True)
+        # Write bytes or text
+        if isinstance(data, str):
+            data = data.encode("utf-8")
+        with open(file_path, "wb") as f:
+            f.write(data)
+        os.chmod(file_path, mode)
+
+    def write(self, filename, arcname=None, compress_type=None):
+        if arcname is None:
+            arcname = os.path.basename(filename)
+        arcname, mode = self._get_arcname_mode(arcname)
+        dest = os.path.join(self.output_dir, arcname)
+        if os.path.realpath(filename) != os.path.realpath(dest):
+            os.makedirs(os.path.dirname(dest), exist_ok=True)
+            shutil.copy(filename, dest)
+        if mode != None:
+            os.chmod(dest, mode)
+
+    def close(self):
+        pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        self.close()
+
+
+def parse_src_dst_path(src_path):
+    # parse src_path with optional dst_path
+    parts = src_path.split(":")
+    if len(parts) == 1:
+        dst_path = os.path.basename(src_path)
+    elif len(parts) == 2:
+        src_path = parts[0]
+        dst_path = parts[1]
+    else:
+        raise ValueError(f"bad file path format of appended page {src_path!r}")
+    return src_path, dst_path
+
+
+def is_compressible(file_bytes: bytes, threshold: float = 0.95) -> bool:
+    """
+    Test if file_bytes are compressible.
+
+    Compresses the data using zlib and compares the compressed size.
+    Returns True if compression ratio < threshold.
+
+    threshold = compressed_size / original_size
+
+    example: threshold=0.95 -> must save at least 5% to be worth compressing
+    """
+    if not file_bytes:
+        return False  # empty file -> dont compress
+    # file_bytes = file_bytes[:1024 * 1024]  # up to 1MB sample
+    # this uses the same compression algorithm as zipfile.ZipFile
+    compressed_bytes = zlib.compress(file_bytes, level=6)
+    ratio = len(compressed_bytes) / len(file_bytes)
+    return ratio < threshold
+
+
+def get_compress_type(file_bytes: bytes, threshold: float = 0.95):
+    if is_compressible(file_bytes, threshold):
+        return zipfile.ZIP_DEFLATED
+    return zipfile.ZIP_STORED
+
+
+def to_utc_string(dt_str: str) -> str:
+    # Normalize Z to +00:00 for fromisoformat
+    if dt_str.endswith("Z"):
+        dt_str = dt_str[:-1] + "+00:00"
+
+    dt = datetime.datetime.fromisoformat(dt_str)
+
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=datetime.timezone.utc)
+    else:
+        dt = dt.astimezone(datetime.timezone.utc)
+
+    return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+class PageFilter:
+    # condition types
+    LE = 0
+    GE = 1
+    RANGE = 2
+    EQ = 3
+
+    # modes
+    MODE_CUSTOM = 0
+    MODE_NONE = 1
+    MODE_ALL = 2
+
+    def __init__(self, spec: str):
+        spec = spec.strip()
+
+        self.mode = self.MODE_CUSTOM
+        self.conditions = []
+
+        if not spec or spec == "none":
+            self.mode = self.MODE_NONE
+            return
+
+        if spec == "all":
+            self.mode = self.MODE_ALL
+            return
+
+        for part in spec.split(","):
+            part = part.strip()
+            if not part:
+                continue
+
+            if "-" in part:
+                if part.startswith("-") and part != "-":
+                    end = int(part[1:])
+                    self.conditions.append((self.LE, end))
+
+                elif part.endswith("-"):
+                    start = int(part[:-1])
+                    self.conditions.append((self.GE, start))
+
+                else:
+                    start, end = part.split("-", 1)
+                    start = int(start)
+                    end = int(end)
+                    if start > end:
+                        raise ValueError(f"Invalid range: {part}")
+                    self.conditions.append((self.RANGE, start, end))
+
+            else:
+                value = int(part)
+                self.conditions.append((self.EQ, value))
+
+    def __call__(self, page: int) -> bool:
+        if self.mode == self.MODE_NONE:
+            return False
+
+        if self.mode == self.MODE_ALL:
+            return True
+
+        for cond in self.conditions:
+            kind = cond[0]
+
+            if kind == self.LE:
+                if page <= cond[1]:
+                    return True
+
+            elif kind == self.GE:
+                if page >= cond[1]:
+                    return True
+
+            elif kind == self.RANGE:
+                if cond[1] <= page <= cond[2]:
+                    return True
+
+            else:  # self.EQ
+                if page == cond[1]:
+                    return True
+
+        return False
+
+
+def make_filter_page(spec: str):
+    return PageFilter(spec)
+
+
+def get_page_mode(page_num, args):
+    # TODO return enum? BINARY_PAGE, GRAYSCALE_PAGE, COLOR_PAGE
+    modes = []
+    if args.filter_binary_page(page_num):
+        modes.append("binary")
+    if args.filter_grayscale_page(page_num):
+        modes.append("grayscale")
+    if args.filter_color_page(page_num):
+        modes.append("color")
+    if len(modes) == 0:
+        return args.page_mode
+    if len(modes) == 1:
+        return modes[0]
+    # if len(modes) > 1:
+    raise ValueError(f"multiple page modes for page {page}: {modes}")
+
+
+def get_image_format(page_num, args):
+    page_mode = get_page_mode(page_num, args)
+    # is_binary_page = (page_mode == "binary")
+    is_grayscale_page = (page_mode == "grayscale")
+    is_color_page = (page_mode == "color")
+    if is_grayscale_page:
+        return args.grayscale_image_format
+    if is_color_page:
+        return args.color_image_format
+    # binary page
+    return args.binary_image_format
+
+
+def image_format_is_multi_threaded(image_format):
+    # the avif encoder is multi-threaded already
+    return image_format in ("avif",)
+
+
+def get_page_num(path):
+    """
+    parse page number from filepath or filename
+
+    "001.jpg" -> 1
+    "001.234.jpg" -> 1
+    "001-234.jpg" -> 1
+    "001x234.jpg" -> 1
+    "001_234.jpg" -> 1
+    """
+    if not isinstance(path, Path):
+        path = Path(path)
+    m = re.match(r"^(\d+)", path.name)
+    page_num = int(m.group(1)) if m else 0
+    # page_num = int(m.group(1)) # can throw
+    return page_num
+
+
+# --- main processor ---
+def process_files_hocr2epubfxl(args):
+    # separate HOCR + images
+    hocrfiles, imgfiles = [], []
+    for f in args.infiles:
+        ext = os.path.splitext(f)[1].lower().lstrip(".")
+        if ext in hocrfile_extensions:
+            hocrfiles.append(f)
+        elif is_image_path(f):
+            imgfiles.append(f)
+        else:
+            raise ValueError(f"Unsupported file extension {f!r}")
+    if imgfiles and len(imgfiles) != len(hocrfiles):
+        raise ValueError("Mismatch: HOCR files and images count differ")
+
+    if args.pages != "all":
+        filter_page = make_filter_page(args.pages)
+        def filter_hocrfile(hocrfile):
+            page_base = get_page_base(hocrfile)
+            page_num = get_page_num(page_base)
+            return filter_page(page_num)
+        if imgfiles:
+            hocrfiles_2 = []
+            imgfiles_2 = []
+            for idx, hocrfile in enumerate(hocrfiles):
+                if filter_hocrfile(hocrfile):
+                    hocrfiles_2.append(hocrfile)
+                    imgfiles_2.append(imgfiles[idx])
+            hocrfiles = hocrfiles_2
+            imgfiles = imgfiles_2
+        else:
+            hocrfiles = list(filter(filter_hocrfile, hocrfiles))
+
+    args.filter_binary_page = make_filter_page(args.binary_image_pages)
+    args.filter_grayscale_page = make_filter_page(args.grayscale_image_pages)
+    args.filter_color_page = make_filter_page(args.color_image_pages)
+
+    ZipFileWriter = zipfile.ZipFile
+
+    if args.output_unpacked:
+        ZipFileWriter = UnpackedZipFileWriter
+
+    # --- create ZIP archive ---
+    with ZipFileWriter(args.output, "w") as zf:
+        # mimetype must be first and uncompressed
+        zf.writestr("mimetype", "application/epub+zip", compress_type=zipfile.ZIP_STORED)
+
+        # META-INF/container.xml
+        zf.writestr(
+            "META-INF/container.xml",
+            "<?xml version='1.0'?>\n"
+            "<container version='1.0'\n"
+            " xmlns='urn:oasis:names:tc:opendocument:xmlns:container'>\n"
+            "  <rootfiles>\n"
+            "    <rootfile full-path='OEBPS/content.opf'\n"
+            "              media-type='application/oebps-package+xml'/>\n"
+            "  </rootfiles>\n"
+            "</container>\n",
+        )
+
+        # --- prepare content.opf ---
+        manifest_items, spine_items = [], []
+        page_basenames = [get_page_base(f) for f in hocrfiles]
+        text_media_type = media_type_by_text_format[args.text_format]
+        page_filename_list = []
+        for i, base in enumerate(page_basenames):
+            page_filename_list.append(f"{base}.{args.text_format}")
+            # properties='scripted': the item file contains <script>
+            manifest_items.append(f"<item id='page{i+1}' href='{base}.{args.text_format}' media-type='{text_media_type}' properties='scripted'/>")
+            spine_items.append(f"<itemref idref='page{i+1}'/>")
+            page_num = get_page_num(base)
+            image_format = get_image_format(page_num, args)
+            manifest_items.append(f"<item id='img{i+1}' href='images/{base}.{image_format}' media-type='image/{image_format}'/>")
+        if args.append_pages:
+            # append pages to manifest
+            page_num = len(page_filename_list)
+            page_filename_set = set(page_filename_list)
+            for src_path in args.append_pages:
+                page_num += 1
+                src_path, dst_path = parse_src_dst_path(src_path)
+                assert os.path.exists(src_path), f"missing file of appended page {src_path!r}"
+                if dst_path in page_filename_set:
+                    raise ValueError(f"filename collision between appended page {src_path!r} and other pages {page_filename_list}")
+                page_filename_list.append(dst_path) # not needed?
+                page_filename_set.add(dst_path)
+                page_ext = os.path.splitext(dst_path)[1].lower().lstrip(".") # html, svg
+                page_media_type = media_type_by_text_format.get(page_ext)
+                if page_media_type is None:
+                    raise ValueError(f"bad file extension of appended page {src_path!r}: page_ext={page_ext!r} not in {media_type_by_text_format.keys()}")
+                manifest_items.append(f"<item id='page{page_num}' href='{dst_path}' media-type='{page_media_type}'/>")
+                spine_items.append(f"<itemref idref='page{page_num}'/>")
+            del page_filename_set
+
+        # add files to manifest
+        for src_path in args.add_files:
+            file_media_type, _encoding = mimetypes.guess_type(src_path)
+            src_path, dst_path = parse_src_dst_path(src_path)
+            manifest_items.append(f"<item id='{dst_path}' href='{dst_path}' media-type='{file_media_type}'/>")
+            spine_items.append(f"<itemref idref='{dst_path}'/>")
+
+        content_opf = (
+            "<?xml version='1.0' encoding='utf-8'?>\n"
+            # EPUB3
+            "<package version='3.0'\n"
+            " xmlns='http://www.idpf.org/2007/opf'\n"
+            # <dc:identifier id="bookid">
+            " unique-identifier='bookid'\n"
+            ">\n"
+            "  <metadata xmlns:dc='http://purl.org/dc/elements/1.1/'>\n"
+        )
+
+        # set metadata
+        if args.doc_title:
+            content_opf += f'    <dc:title id="book-title">{escape(args.doc_title)}</dc:title>\n'
+            content_opf += '    <meta refines="#book-title" property="title-type">main</meta>\n'
+        if args.doc_subtitle:
+            content_opf += f'    <dc:title id="book-subtitle">{escape(args.doc_subtitle)}</dc:title>\n'
+            content_opf += '    <meta refines="#book-subtitle" property="title-type">subtitle</meta>\n'
+        if args.doc_subject:
+            content_opf += f"    <dc:subject>{escape(args.doc_subject)}</dc:subject>\n"
+        if args.doc_description:
+            content_opf += f"    <dc:description>{escape(args.doc_description)}</dc:description>\n"
+        creators = {
+            "": args.doc_creator,
+            "aut": args.doc_author,
+        }
+        for role, vals in creators.items():
+            if vals is None: continue
+            if role == "":
+                for creator in vals:
+                    content_opf += f"    <dc:creator>{escape(creator)}</dc:creator>\n"
+            else:
+                creator_idx = 0
+                for creator in vals:
+                    content_opf += f'    <dc:creator id="creator{creator_idx}">{escape(creator)}</dc:creator>\n'
+                    content_opf += f'    <meta refines="#creator{creator_idx}" property="role" scheme="marc:relators">{role}</meta>\n'
+                    creator_idx += 1
+        contributors = {
+            "ctb": args.doc_contributor,
+            "trl": args.doc_translator,
+            "edt": args.doc_editor,
+            "ill": args.doc_illustrator,
+            "pht": args.doc_photographer,
+            "aui": args.doc_introducer, # Preface author
+        }
+        contributor_idx = 0
+        for role, vals in contributors.items():
+            if vals is None: continue
+            for contributor in vals:
+                content_opf += f'    <dc:contributor id="contributor{contributor_idx}">{escape(contributor)}</dc:contributor>\n'
+                content_opf += f'    <meta refines="#contributor{contributor_idx}" property="role" scheme="marc:relators">{role}</meta>\n'
+                contributor_idx += 1
+        if args.doc_language:
+            content_opf += f"    <dc:language>{escape(args.doc_language)}</dc:language>\n"
+        if args.doc_isbn:
+            content_opf += f'    <dc:identifier id="bookid">urn:isbn:{escape(args.doc_isbn)}</dc:identifier>\n'
+        elif args.doc_identifier:
+            content_opf += f'    <dc:identifier id="bookid">{escape(args.doc_identifier)}</dc:identifier>\n'
+        if args.doc_asin:
+            content_opf += f'    <meta name="amazon:asin" content="{args.doc_asin.replace("\"", "&quot;")}"/>\n'
+        if args.doc_publisher:
+            content_opf += f'    <dc:publisher>{escape(args.doc_publisher)}</dc:publisher>\n'
+        if args.doc_modified:
+            doc_modified = to_utc_string(args.doc_modified)
+            content_opf += f'    <meta property="dcterms:modified">{escape(doc_modified)}</meta>\n'
+        if args.doc_date:
+            content_opf += f'    <dc:date>{escape(args.doc_date)}</dc:date>\n'
+        if args.doc_edition:
+            content_opf += f'    <meta property="dcterms:edition">{escape(args.doc_edition)}</meta>\n'
+        if args.doc_extent:
+            content_opf += f'    <meta property="dcterms:extent">{escape(args.doc_extent)}</meta>\n'
+        if args.doc_rights:
+            content_opf += f'    <dc:rights>{escape(args.doc_rights)}</dc:rights>\n'
+        if args.doc_cover_image:
+            cover_base = os.path.splitext(os.path.basename(args.doc_cover_image))[0]
+            if cover_base in page_basenames:
+                # cover image was already added
+                # manifest_items.append(f"<item id='img{i+1}'
+                cover_base_idx = page_basenames.index(cover_base)
+                cover_item_id = f"img{cover_base_idx+1}"
+                # print(f"using existing cover image {cover_item_id}")
+            else:
+                # add cover image
+                # NOTE we dont scale the cover image
+                # TODO avoid item ID collisions
+                cover_item_id = "cover-image"
+                cover_basename = os.path.basename(args.doc_cover_image)
+                cover_format = os.path.splitext(cover_basename)[1].lstrip(".").lower()
+                if cover_format == "jpg":
+                    cover_format = "jpeg"
+                # TODO avoid file path collisions
+                img_path = f"OEBPS/images/{cover_basename}"
+                with open(args.doc_cover_image, "rb") as f:
+                    zf.writestr(img_path, f.read(), compress_type=zipfile.ZIP_STORED)
+                manifest_items.append(f"<item id='{cover_item_id}' href='images/{cover_basename}' media-type='image/{cover_format}'/>")
+                # print(f"adding cover image {cover_item_id}")
+            content_opf += f'    <meta name="cover" content="{cover_item_id}"/>\n'
+        # extra metadata
+        for tag in (args.doc_dc or []):
+            key, val = tag.split("=", 1)
+            content_opf += f'    <dc:{key}>{escape(val)}</dc:{key}>\n'
+        for tag in (args.doc_property or []):
+            key, val = tag.split("=", 1)
+            content_opf += f'    <meta property="{key}">{escape(val)}"</meta>\n'
+        for tag in (args.doc_meta or []):
+            key, val = tag.split("=", 1)
+            content_opf += f'    <meta name="{key}" content="{val.replace("\"", "&quot;")}"/>\n'
+
+        content_opf += (
+            "    <dc:creator>hocr-to-epub-fxl</dc:creator>\n"
+            # "    <meta name='cover' content='img1'/>\n"
+            "  </metadata>\n"
+            "  <manifest>\n"
+            '    <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>\n'
+            f"    {'\n    '.join(manifest_items)}\n"
+            "  </manifest>\n"
+            "  <spine>\n"
+            f"    {'\n    '.join(spine_items)}\n"
+            "  </spine>\n"
+            "</package>\n"
+        )
+        zf.writestr("OEBPS/content.opf", content_opf)
+
+        # TODO this assumes 600dpi input images
+        font_size_px = 16 * 4.6 * args.scale
+        main_width_px = 2800 * args.scale
+        main_padding_px = 300 * args.scale
+
+        html_buf = io.StringIO()
+        html_buf.write('<?xml version="1.0" encoding="UTF-8"?>\n')
+        html_buf.write('<!DOCTYPE html>\n')
+        html_buf.write('<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">\n')
+        html_buf.write('<head>\n')
+        html_buf.write('  <title>Table of Contents</title>\n')
+        html_buf.write('  <style>\n')
+        html_buf.write('    body {\n')
+        html_buf.write('      background: grey;\n')
+        html_buf.write('    }\n')
+        html_buf.write('    main {\n')
+        html_buf.write('      background: white;\n')
+        html_buf.write(f'      font-size: {font_size_px}px;\n')
+        html_buf.write(f'      width: {main_width_px}px;\n')
+        html_buf.write(f'      padding: {main_padding_px}px;\n')
+        html_buf.write('      margin: auto;\n') # center
+        html_buf.write('    }\n')
+        html_buf.write('    a {\n')
+        html_buf.write('      text-decoration: none;\n')
+        html_buf.write('      color: black;\n')
+        html_buf.write('    }\n')
+        html_buf.write('    span.pagenum {\n')
+        html_buf.write('      margin-left: 1em;\n')
+        html_buf.write('    }\n')
+        html_buf.write('  </style>\n')
+        html_buf.write('  <script>\n')
+        html_buf.write('    // <![CDATA[\n')
+        html_buf.write('    // observe navigation in iframe\n')
+        html_buf.write('    document.addEventListener("click", function(event) {\n')
+        html_buf.write('      const link = event.target.closest("a");\n')
+        html_buf.write('      if (!link) return;\n')
+        html_buf.write('      if (!link.href) return;\n')
+        html_buf.write('      // Send message to parent frame before navigation\n')
+        html_buf.write('      window.parent.postMessage({\n')
+        html_buf.write('        type: "iframe-link-click",\n')
+        html_buf.write('        href: link.href\n')
+        html_buf.write('      }, "*");\n')
+        html_buf.write('    });\n')
+        html_buf.write('    // ]]>\n')
+        html_buf.write('  </script>\n')
+        html_buf.write('</head>\n')
+        html_buf.write('<body>\n')
+        html_buf.write('<main>\n')
+        html_buf.write('  <nav epub:type="toc" id="toc">\n')
+        # html_buf.write('    <h1>Contents</h1>\n')
+        nav_xhtml_write_toc_list(html_buf, args, page_basenames)
+        html_buf.write('  </nav>\n')
+        # dont create pages list if we have a table of contents
+        if args.doc_contents_file is None:
+            html_buf.write('  <nav epub:type="page-list" id="page-list">\n')
+            # html_buf.write('    <h2>Pages</h2>\n')
+            html_buf.write('    <ol>\n')
+            for i, base in enumerate(page_basenames):
+                html_buf.write(f'      <li><a href="{base}.{args.text_format}">{i+1}</a></li>\n')
+            html_buf.write('    </ol>\n')
+            html_buf.write('  </nav>\n')
+        html_buf.write('</main>\n')
+        html_buf.write('</body>\n')
+        html_buf.write('</html>\n')
+        zf.writestr("OEBPS/nav.xhtml", html_buf.getvalue())
+
+        # --- process pages in parallel and stream directly to ZIP ---
+        def process_page_result(page_result):
+            svg_path, svg_data, img_path, img_data = page_result
+            zf.writestr(svg_path, svg_data, compress_type=zipfile.ZIP_DEFLATED)
+            if img_path and img_data:
+                zf.writestr(img_path, img_data, compress_type=zipfile.ZIP_STORED)
+            svg_path_list.append(svg_path)
+            svg_data_list.append(svg_data)
+        svg_path_list = []
+        svg_data_list = []
+        max_workers = args.jobs
+
+        # FIXME handle multiple different image formats
+        # maybe cluster pages by image_format_is_multi_threaded
+        image_format = args.binary_image_format
+
+        # TODO run tqdm in a separate thread to get more frequent updates
+        if args.jobs == 1 or image_format_is_multi_threaded(image_format):
+            with (
+                    tqdm(total=len(hocrfiles), unit="p", ncols=80) as progress_bar,
+                ):
+                for idx, hocrfile in enumerate(hocrfiles):
+                    page_result = process_page(hocrfile, args)
+                    process_page_result(page_result)
+                    progress_bar.update(1)
+        else:
+            next_page = 0
+            page_results = {}
+            with (
+                    ProcessPoolExecutor(max_workers=max_workers) as executor,
+                    tqdm(total=len(hocrfiles), unit="p", ncols=80) as progress_bar,
+                ):
+                futures = {executor.submit(try_process_page, f, args): i for i, f in enumerate(hocrfiles)}
+                for future in as_completed(futures):
+                    idx = futures[future]
+                    ok, result = future.result()
+                    if not ok:
+                        executor.shutdown(cancel_futures=True)
+                        e, tb = result
+                        print(f"\nException in worker {idx}:\n{tb}")
+                        raise e
+                    page_results[idx] = result
+                    # write pages in order as they become available
+                    while next_page in page_results:
+                        page_result = page_results.pop(next_page)
+                        process_page_result(page_result)
+                        next_page += 1
+                        progress_bar.update(1)
+
+        # append pages to zipfile
+        appended_page_path_list = []
+        appended_page_data_list = []
+        for src_path in args.append_pages:
+            # parse src_path with optional dst_path
+            parts = src_path.split(":")
+            if len(parts) == 1:
+                dst_path = os.path.basename(src_path)
+            elif len(parts) == 2:
+                src_path = parts[0]
+                dst_path = parts[1]
+            # all pages go to the OEBPS directory
+            dst_path = f"OEBPS/{dst_path}"
+            appended_page_path_list.append(dst_path)
+            with open(src_path, "rb") as f:
+                page_bytes = f.read()
+            appended_page_data_list.append(page_bytes)
+            if (
+                    args.output_unpacked and
+                    os.path.realpath(src_path) == os.path.realpath(os.path.join(args.output, dst_path))
+                ):
+                # edge case: src_path == dst_path
+                pass
+            else:
+                zf.writestr(dst_path, page_bytes, compress_type=zipfile.ZIP_DEFLATED)
+
+        # add files to zipfile
+        for src_path in args.add_files:
+            src_path, dst_path = parse_src_dst_path(src_path)
+            if (
+                    args.output_unpacked and
+                    os.path.realpath(src_path) == os.path.realpath(os.path.join(args.output, dst_path))
+                ):
+                # edge case: src_path == dst_path
+                continue
+            with open(src_path, "rb") as f:
+                file_bytes = f.read()
+            compress_type = get_compress_type(file_bytes)
+            file_info = zipfile.ZipInfo(dst_path)
+            # preserve executable mode
+            file_mode = 0o755 if os.access(src_path, os.X_OK) else 0o644
+            file_info.external_attr = (file_mode & 0xFFFF) << 16
+            zf.writestr(file_info, file_bytes, compress_type=compress_type)
+            del file_bytes
+
+        # join all pages
+        html_path = "OEBPS/allpages.xhtml"
+        html_buf = io.BytesIO()
+        # EPUB3 supports XHTML5
+        # https://validator.w3.org/nu/#textarea
+        html_buf.write(b'<?xml version="1.0" encoding="UTF-8"?>\n')
+        html_buf.write(b'<!DOCTYPE html>\n')
+        # TODO set metadata: lang
+        html_buf.write(b'<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">\n')
+        html_buf.write(b"<head>\n")
+        # set metadata: title
+        html_buf.write(b'<title>')
+        html_buf.write(escape(args.doc_title).encode("utf8"))
+        html_buf.write(b'</title>\n')
+        html_buf.write(b'<meta name="generator" content="hocr-to-epub-fxl" />\n')
+
+        if args.canonical_url_base:
+            # set metadata: canonical URL
+            canonical_url = urllib.parse.urljoin(args.canonical_url_base, "OEBPS/allpages.xhtml")
+            canonical_url = urllib.parse.quote(canonical_url, safe=":/?&+")
+            html_buf.write(b'<link rel="canonical" href="' + canonical_url.encode("utf8") + b'"/>\n')
+
+        # TODO why?
+        # html_buf.write(b'<meta name="viewport" content="width=device-width, initial-scale=1">\n')
+
+        # TODO refactor html style
+        html_buf.write(b'<style type="text/css">\n')
+        html_buf.write(b'* {\n')
+        html_buf.write(b' margin: 0;\n')
+        html_buf.write(b' padding: 0;\n')
+        html_buf.write(b' font-size: 100%;\n')
+        html_buf.write(b' line-height: 100%;\n')
+        html_buf.write(b'}\n')
+        html_buf.write(b'body {\n')
+        html_buf.write(b' background: gray;\n')
+        html_buf.write(b' width: 100%;\n')
+        html_buf.write(b'}\n')
+        html_buf.write(b'div.page {\n')
+        html_buf.write(b' position: relative;\n')
+        html_buf.write(b' overflow: hidden;\n')
+        html_buf.write(b' transform-origin: top left;\n')
+        html_buf.write(b' margin: auto;\n')
+        html_buf.write(b'}\n')
+        html_buf.write(b'div.page > img.page {\n')
+        html_buf.write(b' position: absolute;\n')
+        html_buf.write(b' left: 0;\n')
+        html_buf.write(b' top: 0;\n')
+        html_buf.write(b' margin: 0;\n')
+        html_buf.write(b' user-select: none;\n')
+        html_buf.write(b'}\n')
+        html_buf.write(b'div.p {\n')
+        html_buf.write(b' position: absolute;\n')
+        html_buf.write(b' white-space: nowrap;\n')
+        html_buf.write(b'}\n')
+        html_buf.write(b'div.p > div, span {\n')
+        html_buf.write(b' display: inline;\n')
+        html_buf.write(b' position: relative;\n')
+        html_buf.write(b' color: transparent;\n')
+        html_buf.write(b' white-space: nowrap;\n')
+        html_buf.write(b' line-height: 1;\n')
+        html_buf.write(b' transform-origin: left center;\n')
+        html_buf.write(b' vertical-align: top;\n')
+        html_buf.write(b'}\n')
+        html_buf.write(b'@media (prefers-color-scheme: dark) {\n')
+        html_buf.write(b' div.page { filter: invert(); }\n')
+        html_buf.write(b'}\n')
+        html_buf.write(b'div.p, div.p > div, span {\n')
+        html_buf.write(b' font-family: monospace;\n')
+        html_buf.write(b' font-variant-ligatures: none;\n')
+        html_buf.write(b' font-feature-settings: "liga" 0;\n')
+        html_buf.write(b' font-kerning: none;\n')
+        html_buf.write(b'}\n')
+        html_buf.write(b'div.page {\n')
+        # html_buf.write(b' border-bottom: solid 1px gray;\n')
+        # https://stackoverflow.com/a/18841365/10440128
+        html_buf.write(b' box-shadow: 0 -1px 0 gray;\n') # outline-bottom
+        html_buf.write(b'}\n')
+        html_buf.write(b'@page {\n')
+        # html_buf.write(b' size: A4 portrait;\n')
+        html_buf.write(b' margin: 0;\n')
+        html_buf.write(b'}\n')
+        html_buf.write(b'@media print {\n')
+        html_buf.write(b' body {\n')
+        html_buf.write(b'  background: none;\n')
+        html_buf.write(b' }\n')
+        html_buf.write(b" div.page {\n")
+        html_buf.write(b'  box-shadow: none;\n')
+        html_buf.write(b'  max-width: 100vw;\n')
+        html_buf.write(b'  max-height: 100vh;\n')
+        # html_buf.write(b'  width: auto;\n')
+        # html_buf.write(b'  height: auto;\n')
+        # html_buf.write(b'  margin: 0 auto;\n')
+        html_buf.write(b'  page-break-before: always;\n')
+        html_buf.write(b'  break-before: page;\n')
+        # html_buf.write(b'  box-sizing: border-box;\n')
+        html_buf.write(b" }\n")
+        html_buf.write(b" div.page > img.page {\n")
+        html_buf.write(b'  max-width: 100vw;\n')
+        html_buf.write(b'  max-height: 100vh;\n')
+        html_buf.write(b" }\n")
+        html_buf.write(b" div.page:first-child {\n")
+        html_buf.write(b'  page-break-before: auto;\n')
+        html_buf.write(b'  break-before: auto;\n')
+        html_buf.write(b'\n')
+        html_buf.write(b" }\n")
+        html_buf.write(b"}\n")
+        html_buf.write(b"</style>\n")
+        html_buf.write(b"</head>\n")
+        html_buf.write(b"<body>\n")
+        # xml_header = b'<?xml version="1.0" encoding="UTF-8"?>\n'
+        for svg_idx, svg_path in enumerate(svg_path_list):
+            html_buf.write(b"<!-- " + os.path.basename(svg_path).encode("utf8") + b"-->\n")
+            svg_data = svg_data_list[svg_idx]
+            # svg_data = svg_data.replace(b'xlink:href="images/', b'xlink:href="OEBPS/images/')
+            # no. chromium ignores extra xml processing instructions in the html body
+            # if svg_data.startswith(xml_header):
+            #     svg_data = svg_data[len(xml_header):]
+            svg_data = re.sub(rb".*<body>\n(.*)</body>.*", rb"\1", svg_data, flags=re.DOTALL)
+            if svg_idx > 0:
+                pattern = rb'<script type="application/javascript" class="pragma-once">.*?</script>'
+                svg_data = re.sub(pattern, b"", svg_data, flags=re.DOTALL)
+            html_buf.write(svg_data)
+        # append pages to joined html file
+        for page_idx, page_path in enumerate(appended_page_path_list):
+            html_buf.write(b"<!-- " + page_path.lstrip("OEBPS/").encode("utf8") + b"-->\n")
+            page_data = appended_page_data_list[page_idx]
+            html_buf.write(page_data)
+        html_buf.write(b"</body>\n")
+        html_buf.write(b"</html>\n")
+        html_data = html_buf.getvalue()
+        zf.writestr(html_path, html_data, compress_type=zipfile.ZIP_DEFLATED)
+
+        # join all text
+        text_html_path = "OEBPS/fulltext.xhtml"
+        text_html_data = bytes(html_data) # copy
+        # remove all images
+        text_html_data = re.sub(rb'<img.+?>', b"", text_html_data)
+        # remove page positions
+        text_html_data = re.sub(rb'<div class="page" id="(.*?)" style=".+?">', rb'<div class="page" id="\1">', text_html_data)
+        # remove paragraph positions
+        text_html_data = re.sub(rb'<div class="p" style=".+?">', b'<div class="p">', text_html_data)
+        # remove word positions
+        # <span style="left:50.703125px;top:0.5px;font-size:33.5px;letter-spacing:-0.356201171875px">Verhaltensweisen</span><span style="left:50.703125px;font-size:53.5px"><br/></span>
+        text_html_data = re.sub(rb'<span style=".+?">(.+?)</span>\n', rb'\1 ', text_html_data)
+        # text_html_data = re.sub(rb'<span style=".+?">(.+?)</span><br/>', rb'\1<br/>\n', text_html_data)
+        text_html_data = re.sub(rb'</span><span style=".+?">((?:<br/>)+) ', rb'\1\n', text_html_data)
+        # make it load 1000 times faster
+        text_html_data = re.sub(rb'<style.*?>.+?</style>', b"", text_html_data, flags=re.DOTALL)
+        text_html_data = re.sub(rb'<script.*?>.+?</script>', b"", text_html_data, flags=re.DOTALL)
+        zf.writestr(text_html_path, text_html_data, compress_type=zipfile.ZIP_DEFLATED)
+
+        # reader: split pages view
+        reader_html_data = importlib.resources.read_binary("hocr", "data/svg-ebook-reader.html")
+        # reader_html_data = importlib.resources.read_binary("hocr", f"data/{args.text_format}-ebook-reader.html")
+        reader_html_data = reader_html_data.replace(
+            b"const svgFiles = [ /* TODO */ ];",
+            (
+                b"const svgFiles = [\n" +
+                b"".join(map(lambda s: repr(s).encode("utf8") + b",\n", svg_path_list)) +
+                b"".join(map(lambda s: repr(s).encode("utf8") + b",\n", appended_page_path_list)) +
+                b"];"
+            )
+        )
+        # set metadata: title
+        replacement = b"<title>" + args.doc_title.encode("utf8") + b"</title>"
+        reader_html_data = re.sub(rb"<title>.*</title>", replacement, reader_html_data)
+
+        if args.canonical_url_base:
+            # set metadata: canonical URL
+            canonical_url = args.canonical_url_base + "index.xhtml"
+            canonical_url = urllib.parse.quote(canonical_url, safe=":/?&+")
+            a = b'<link rel="canonical" href=""/>'
+            b = b'<link rel="canonical" href="' + canonical_url.encode("utf8") + b'"/>'
+            reader_html_data = reader_html_data.replace(a, b)
+
+        if args.doc_contents_file is None:
+            # remove TOC from menu
+            a = b'  <a href="OEBPS/nav.xhtml" target="page1">Contents</a>\n'
+            b = b''
+            reader_html_data = reader_html_data.replace(a, b)
+
+        zf.writestr("index.xhtml", reader_html_data, compress_type=zipfile.ZIP_DEFLATED)
+
+        # add empty .nojekyll file for github-pages
+        zf.writestr(".nojekyll", "", compress_type=zipfile.ZIP_STORED)
+
+    # print(f"[+] EPUB written: {args.output}")
+
+
+def nav_xhtml_write_toc_list(html_buf, args, page_basenames):
+    if args.doc_contents_file is None:
+        html_buf.write('    <ol>\n')
+        for i, base in enumerate(page_basenames):
+            html_buf.write(f'      <li><a href="{base}.{args.text_format}">Page {i+1}</a></li>\n')
+        html_buf.write('    </ol>\n')
+        return
+    contents_file_ext = os.path.splitext(args.doc_contents_file)[1].lower()
+    if contents_file_ext == ".md":
+        return nav_xhtml_write_toc_list_md(html_buf, args, page_basenames)
+    raise NotImplementedError(f"bad contents_file_ext {contents_file_ext!r}")
+
+
+def nav_xhtml_write_toc_list_md(html_buf, args, page_basenames):
+    with open(args.doc_contents_file, encoding="utf-8") as f:
+        lines = f.readlines()
+
+    def detect_indent_step(lines):
+        for line in lines:
+            m = re.match(r'^( +)- ', line)
+            if m:
+                return len(m.group(1))
+        return 1
+
+    indent_step = detect_indent_step(lines)
+
+    level_stack = []
+    previous_level = 0
+    first_item = True
+
+    xhtml_depth = 2  # base indent inside <nav>
+
+    def write(line):
+        html_buf.write("  " * xhtml_depth + line + "\n")
+
+    page_href_of_page_num = [None]
+    for base in page_basenames:
+        page_href_of_page_num.append(f"{base}.{args.text_format}")
+
+    page_num = 0
+    page_href = None
+    chapter_title = None
+
+    for line in lines:
+
+        if not page_num is None:
+            last_page_num = page_num
+        last_chapter_title = chapter_title
+
+        # parse TOC line
+        match = re.match(r'^( *)-\s+(.*?)(?:\s+(\d+))?\s*$', line)
+        if not match:
+            continue
+
+        spaces, chapter_title, page_num = match.groups()
+
+        if page_num is None:
+            page_href = None
+            # unescape number at end of chapter title
+            # a: Some Chapter \123
+            # b: Some Chapter 123
+            match = re.match(r'^(.*\s+)\\(\d+)$', chapter_title)
+            if match:
+                chapter_title = match.group(1) + match.group(2)
+            chapter_link = f'<span class="nopagenum">{chapter_title}</span>'
+        else:
+            page_num = int(page_num)
+            if page_num < last_page_num:
+                raise ValueError(
+                    f"content items must be in reading order. "
+                    f"item {repr(f'{chapter_title} #{page_num}')} is before the previous "
+                    f"item {repr(f'{last_chapter_title} #{last_page_num}')}"
+                )
+            try:
+                page_href = page_href_of_page_num[page_num]
+            except IndexError as exc:
+                # pass # debug
+                raise ValueError(f"TOC item has no page. page_num={page_num} chapter_title={chapter_title!r}")
+            chapter_link = f'<a href="{page_href}">{chapter_title} <span class="pagenum">{page_num}</span></a>'
+
+        level = len(spaces) // indent_step
+        chapter_title = escape(chapter_title)
+
+        if first_item:
+
+            write("<ol>")
+            level_stack.append(level)
+            xhtml_depth += 1
+            write("<li>")
+            xhtml_depth += 1
+            write(chapter_link)
+            first_item = False
+            previous_level = level
+            continue
+
+        if level > previous_level:
+            write("<ol>")
+            level_stack.append(level)
+            xhtml_depth += 1
+            write("<li>")
+            xhtml_depth += 1
+            write(chapter_link)
+
+        elif level < previous_level:
+            while level_stack and level_stack[-1] > level:
+                xhtml_depth -= 1
+                write("</li>")
+                xhtml_depth -= 1
+                write("</ol>")
+                level_stack.pop()
+            xhtml_depth -= 1
+            write("</li>")
+            write("<li>")
+            xhtml_depth += 1
+            write(chapter_link)
+
+        else:
+            xhtml_depth -= 1
+            write("</li>")
+            write("<li>")
+            xhtml_depth += 1
+            write(chapter_link)
+
+        previous_level = level
+
+    while level_stack:
+        xhtml_depth -= 1
+        write("</li>")
+        xhtml_depth -= 1
+        write("</ol>")
+        level_stack.pop()
+
+    return html_buf.getvalue()
+
+
+def get_adaptive_window_size(image_shape):
+    """
+    Calculate adaptive window size for Sauvola binarization.
+    Window size is roughly 1/40th of the smaller image dimension,
+    must be odd, and is bounded between 31 and 101 pixels.
+    """
+    min_dimension = min(image_shape)
+    # Calculate base window size as 1/40th of smaller dimension
+    window_size = min_dimension // 40
+    
+    # Ensure window size is odd
+    if window_size % 2 == 0:
+        window_size += 1
+    
+    # Bound between 31 and 101
+    window_size = max(31, min(101, window_size))
+    
+    return window_size
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description='HOCR to EPUB-FXL')
+    parser.add_argument(
+        'infiles', # args.infiles
+        nargs='+',
+        help=' '.join([
+            'Filenames to read.',
+            'Either a list of hocr files:',
+            '1.hocr 2.hocr 3.hocr.',
+            'Or a list of hocr and image files:',
+            '1.hocr 1.jpg 2.hocr 2.jpg 3.hocr 3.jpg.',
+        ]),
+    )
+    parser.add_argument(
+        '-o',
+        '--output', # args.output
+        help='path to output EPUB file',
+        required=True,
+    )
+    parser.add_argument(
+        '--output-unpacked', # args.output_unpacked
+        help='write EPUB contents to the directory at output. replace existing files',
+        action='store_true',
+    )
+    parser.add_argument(
+        '-s',
+        '--scale', # args.scale
+        help='scale factor for the page images. default: 1. example: 0.5. note: downscaling can reduce visual quality',
+        default=1,
+        type=float,
+    )
+
+    parser.add_argument(
+        "--scale-resample", # args.scale_resample
+        default="nearest",
+        choices=["nearest", "bilinear", "lanczos"],
+        help="scale resampling algorithm",
+    )
+
+    parser.add_argument(
+        '--image-color-levels', # args.image_color_levels
+        help='adjust image color levels to increase contrast. format: {low_threshold}x{high_threshold}. default: 0x100. example: 20x80',
+        default=None,
+        type=str,
+    )
+
+    parser.add_argument(
+        '--binary-image-quality', # args.binary_image_quality
+        help=f'compression quality in percent for the page images. default: {DEFAULT_BINARY_IMAGE_QUALITY}. example: 5',
+        default=DEFAULT_BINARY_IMAGE_QUALITY,
+        type=int,
+    )
+
+    parser.add_argument(
+        '--grayscale-image-quality', # args.grayscale_image_quality
+        help=f'compression quality in percent for grayscale pages. default: {DEFAULT_GRAYSCALE_IMAGE_QUALITY}',
+        default=DEFAULT_GRAYSCALE_IMAGE_QUALITY,
+        type=int,
+    )
+
+    parser.add_argument(
+        '--color-image-quality', # args.color_image_quality
+        help=f'compression quality in percent for color pages. default: {DEFAULT_COLOR_IMAGE_QUALITY}',
+        default=DEFAULT_COLOR_IMAGE_QUALITY,
+        type=int,
+    )
+
+    parser.add_argument(
+        "--binary-image-algo", # args.binary_image_algo
+        default=DEFAULT_BINARY_IMAGE_ALGO,
+        choices=["otsu", "niblack", "sauvola", "wolf"],
+        help=f'image binarization algorithm. default: {DEFAULT_BINARY_IMAGE_ALGO}',
+    )
+
+    parser.add_argument(
+        '--binary-image-threshold-sensitivity', # args.binary_image_threshold_sensitivity
+        help=f'Threshold sensitivity (k value) for Sauvola binarization. Higher values produce darker output. Default: {DEFAULT_BINARY_IMAGE_THRESHOLD_SENSITIVITY}',
+        default=DEFAULT_BINARY_IMAGE_THRESHOLD_SENSITIVITY,
+        type=float,
+    )
+
+    parser.add_argument(
+        '--binary-image-window-size', # args.binary_image_window_size
+        help='Window size for Sauvola binarization. Default: Derived from image size in get_adaptive_window_size',
+        default=0,
+        type=int,
+    )
+
+    parser.add_argument(
+        '-P',
+        '--pages', # args.pages
+        help='select pages. default: all. example: 1-4',
+        default="all",
+        type=str,
+    )
+
+    parser.add_argument(
+        '--page-mode', # args.page_mode
+        help=f'page mode for all pages. default: {DEFAULT_PAGE_MODE}. values: {PAGE_MODE_VALUES}',
+        default=DEFAULT_PAGE_MODE,
+        type=str,
+    )
+
+    # TODO shorten to --binary-pages etc
+    # TODO rename "binary" to "bitonal"
+    parser.add_argument(
+        '--binary-image-pages', # args.binary_image_pages
+        help='override page-mode to binary for these pages. default: none. example: 1-4',
+        default="none",
+        type=str,
+    )
+
+    parser.add_argument(
+        '--grayscale-image-pages', # args.grayscale_image_pages
+        help='override page-mode to grayscale for these pages. default: none. example: 1-4',
+        default="none",
+        type=str,
+    )
+
+    parser.add_argument(
+        '--color-image-pages', # args.color_image_pages
+        help='override page-mode to color for these pages. default: none. example: 1-4',
+        default="none",
+        type=str,
+    )
+
+    parser.add_argument(
+        '--append-page',
+        dest="append_pages", # args.append_pages
+        action='append',
+        metavar='PATH[:DST_PATH]',
+        help='append page file in HTML or SVG format. the optional DST_PATH is relative to the OEBPS directory',
+        type=str,
+        default=[],
+    )
+    parser.add_argument(
+        '--add-file',
+        dest="add_files", # args.add_files
+        action='append',
+        metavar='PATH[:DST_PATH]',
+        help='add file in any format',
+        type=str,
+        default=[],
+    )
+
+    parser.add_argument(
+        '--image-format', # args.image_format
+        help=f'image format for all page modes (binary, grayscale, color). default: {DEFAULT_IMAGE_FORMAT}. example: webp',
+        # default=None, # DEFAULT_IMAGE_FORMAT
+        default=DEFAULT_IMAGE_FORMAT,
+        type=str,
+    )
+
+    parser.add_argument(
+        '--binary-image-format', # args.binary_image_format
+        help=f'image format for binary page images. default: image-format',
+        default=None,
+        type=str,
+    )
+
+    parser.add_argument(
+        '--grayscale-image-format', # args.grayscale_image_format
+        help=f'image format for grayscale page images. default: image-format',
+        default=None,
+        type=str,
+    )
+
+    parser.add_argument(
+        '--color-image-format', # args.color_image_format
+        help=f'image format for color page images. default: image-format',
+        default=None,
+        type=str,
+    )
+
+    parser.add_argument(
+        '--binary-image-save-speed', # args.binary_image_save_speed
+        help=f'speed between 0 and 9. default {DEFAULT_BINARY_IMAGE_SAVE_SPEED}. lower is better, but there are exceptions like 7',
+        default=DEFAULT_BINARY_IMAGE_SAVE_SPEED,
+        type=int,
+    )
+
+    parser.add_argument(
+        '--grayscale-image-save-speed', # args.grayscale_image_save_speed
+        help=f'speed between 0 and 9. default {DEFAULT_GRAYSCALE_IMAGE_SAVE_SPEED}. lower is better, but there are exceptions',
+        default=DEFAULT_GRAYSCALE_IMAGE_SAVE_SPEED,
+        type=int,
+    )
+
+    parser.add_argument(
+        '--color-image-save-speed', # args.color_image_save_speed
+        help=f'speed between 0 and 9. default {DEFAULT_COLOR_IMAGE_SAVE_SPEED}. lower is better, but there are exceptions',
+        default=DEFAULT_COLOR_IMAGE_SAVE_SPEED,
+        type=int,
+    )
+
+    parser.add_argument(
+        # '-f',
+        '--text-format', # args.text_format
+        help=f'text format for the page images. default: {DEFAULT_TEXT_FORMAT}. values: {", ".join(TEXT_FORMAT_LIST)}',
+        default=DEFAULT_TEXT_FORMAT,
+        type=str,
+    )
+    parser.add_argument(
+        '--text-html-join-words', # args.text_html_join_words
+        help=f'join words of each line to make text searchable across words in html',
+        action='store_true',
+    )
+
+    parser.add_argument(
+        '--text-html-relative-word-positions', # args.text_html_relative_word_positions
+        help=(
+            'use relative word positions in html.'
+            ' con: this gives wrong word positions in some browsers.'
+            ' pro: this enables text search across words.'
+        ),
+        action='store_true',
+    )
+
+    # parser.add_argument(
+    #     '--text-html-absolute-word-positions', # args.text_html_absolute_word_positions
+    #     help=(
+    #         'use absolute word positions in html.'
+    #         ' pro: this gives correct word positions in all browsers.'
+    #         # https://groups.google.com/a/chromium.org/g/chromium-discuss/c/KBT__5UhptE
+    #         # searching text in HTML spans with absolute positions
+    #         ' con: this breaks text search across words.'
+    #     ),
+    #     action='store_true',
+    # )
+
+    parser.add_argument(
+        '--text-html-force-word-spacing', # args.text_html_force_word_spacing
+        help=f'append &nbsp; after each word. useful with text-html-absolute-word-positions',
+        action='store_true',
+    )
+
+    # TODO how does this work with different fonts
+    # works: chrome firefox
+    # fails: tor-browser (error changes with zoom level)
+    # args.text_html_relative_word_positions_dynamic_font_width = False
+
+    # TODO?
+    # NOTE this requires javascript
+    # works: chrome
+    # fails: firefox tor-browser
+    # args.text_html_relative_word_positions_dynamic_font_width = True
+
+    parser.add_argument(
+        '--text-html-relative-word-positions-dynamic-font-width', # args.text_html_relative_word_positions_dynamic_font_width
+        help='use javascript to adjust font width in html',
+        action='store_true',
+    )
+
+    # parser.add_argument(
+    #     '--text-html-relative-word-positions-static-font-width', # args.text_html_relative_word_positions_static_font_width
+    #     help='do not use javascript to adjust font width in html',
+    #     action='store_true',
+    # )
+
+    # parser.add_argument(
+    #     '--text-html-bundle-font', # args.text_html_bundle_font
+    #     help='use a bundled monospace font (Cousine-Regular.woff2) instead of the system monospace font in html',
+    #     action='store_true',
+    # )
+
+    parser.add_argument(
+        '--text-html-join-lines', # args.text_html_join_lines
+        help=(
+            'do not add linebreaks after lines in html.'
+            ' con: the print layout is not preserved in the clipboard text.'
+            # https://groups.google.com/a/chromium.org/g/chromium-discuss/c/CJ2Ei2Khb4I
+            # text-search across linebreaks should normalize whitespace
+            ' pro: this enables text search across lines.'
+        ),
+        action='store_true',
+    )
+
+    parser.add_argument(
+        '--text-svg-split-lines', # args.text_svg_split_lines
+        help=(
+            'split lines of each paragraph to preserve the fixed layout in svg.'
+            ' note: this breaks text search across lines in a paragraph.'
+        ),
+        action='store_true',
+    )
+
+    parser.add_argument(
+        '--doc-contents-file', # args.doc_contents_file
+        help=(
+            'document contents file. '
+            'example contents.md line: '
+            '"- Some Chapter 123" = link to "Some Chapter" on page 123. '
+            '"- Some Chapter \\123" = "Some Chapter 123" without link to page'
+        ),
+        type=str,
+    )
+
+    parser.add_argument(
+        '--doc-title', # args.doc_title
+        help=f'document title',
+        default="",
+        type=str,
+    )
+
+    parser.add_argument(
+        '--doc-subtitle', # args.doc_subtitle
+        help=f'document subtitle',
+        default="",
+        type=str,
+    )
+
+    parser.add_argument(
+        '--doc-subject', # args.doc_subject
+        help=f'document subject (keywords)',
+        type=str,
+    )
+
+    parser.add_argument(
+        '--doc-description', # args.doc_description
+        help=f'document description',
+        type=str,
+    )
+
+    parser.add_argument(
+        '--doc-author', # args.doc_author
+        help=f'document author',
+        type=str,
+        action='append', # multiple values
+    )
+
+    parser.add_argument(
+        '--doc-translator', # args.doc_translator
+        help=f'document translator',
+        type=str,
+        action='append', # multiple values
+    )
+
+    parser.add_argument(
+        '--doc-editor', # args.doc_editor
+        help=f'document editor',
+        type=str,
+        action='append', # multiple values
+    )
+
+    parser.add_argument(
+        '--doc-illustrator', # args.doc_illustrator
+        help=f'document illustrator',
+        type=str,
+        action='append', # multiple values
+    )
+
+    parser.add_argument(
+        '--doc-photographer', # args.doc_photographer
+        help=f'document photographer',
+        type=str,
+        action='append', # multiple values
+    )
+
+    parser.add_argument(
+        '--doc-introducer', # args.doc_introducer
+        help=f'document introducer (author of introduction / preface / foreword / afterword)',
+        type=str,
+        action='append', # multiple values
+    )
+
+    parser.add_argument(
+        '--doc-contributor', # args.doc_contributor
+        help=f'document contributor',
+        type=str,
+        action='append', # multiple values
+    )
+
+    parser.add_argument(
+        '--doc-creator', # args.doc_creator
+        help=f'document creator',
+        type=str,
+        action='append', # multiple values
+    )
+
+    parser.add_argument(
+        '--doc-language', # args.doc_language
+        help=f'document language. example: "en"',
+        type=str,
+    )
+
+    parser.add_argument(
+        '--doc-isbn', # args.doc_isbn
+        help=f'document ISBN number. prefer ISBN-13',
+        type=str,
+    )
+
+    parser.add_argument(
+        '--doc-asin', # args.doc_asin
+        help=f'document ASIN number',
+        type=str,
+    )
+
+    parser.add_argument(
+        '--doc-identifier', # args.doc_identifier
+        help=f'document identifier',
+        type=str,
+    )
+
+    parser.add_argument(
+        '--doc-publisher', # args.doc_publisher
+        help=f'document publisher',
+        type=str,
+    )
+
+    parser.add_argument(
+        '--doc-modified', # args.doc_modified
+        help=f'document modified date. example: "2026-02-02"',
+        type=str,
+        # epubcheck requires dcterms:modified
+        required=True,
+    )
+
+    parser.add_argument(
+        '--doc-date', # args.doc_date
+        help=f'document date',
+        type=str,
+    )
+
+    parser.add_argument(
+        '--doc-edition', # args.doc_edition
+        help=f'document edition. example: "1"',
+        type=str,
+    )
+
+    parser.add_argument(
+        '--doc-extent', # args.doc_extent
+        help=f'document extent. example: "123 pages"',
+        type=str,
+    )
+
+    parser.add_argument(
+        '--doc-rights', # args.doc_rights
+        help=f'document rights. example: "© 2026 Some Author"',
+        type=str,
+    )
+
+    parser.add_argument(
+        '--doc-cover-image', # args.doc_cover_image
+        help=f'document cover image',
+        type=str,
+    )
+
+    parser.add_argument(
+        '--doc-dc', # args.doc_dc
+        help=f'document extra Dublin Core tag. example: "identifier=Some ID"',
+        type=str,
+        action='append', # multiple values
+    )
+
+    parser.add_argument(
+        '--doc-property', # args.doc_property
+        help=f'document extra property tag. example: "belongs-to-collection=Some Series"',
+        type=str,
+        action='append', # multiple values
+    )
+
+    parser.add_argument(
+        '--doc-meta', # args.doc_meta
+        help=f'document extra meta tag. example: "amazon:asin=B08XYZ1234"',
+        type=str,
+        action='append', # multiple values
+    )
+
+    # TODO
+    # parser.add_argument(
+    #     '--inverse', # args.inverse
+    #     help='convert EPUB-FXL to HOCR',
+    #     action='store_true',
+    # )
+
+    parser.add_argument(
+        '--canonical-url-base', # args.canonical_url_base
+        help=f'canonical URL of the root directory path',
+        default="",
+        type=str,
+    )
+
+    parser.add_argument(
+        '--ignore-cached-images', # args.ignore_cached_images
+        action='store_true',
+    )
+
+    # no. cropping the images before compression distorts benchmarks
+    # parser.add_argument(
+    #     '--crop-pages', # args.crop_pages
+    #     type=str,
+    #     # same format as "magick -crop"
+    #     help='process only a part of each page. format: WxH+L+T. example: 200x100+40+20',
+    # )
+
+    parser.add_argument(
+        '--jobs', # args.jobs
+        help=f'run N jobs in parallel. default: {default_max_workers}. max: {max_max_workers}',
+        default=default_max_workers,
+        type=int,
+    )
+
+    parser.add_argument(
+        '--debug', # args.debug
+        help='add debug info to the output',
+        action='store_true',
+    )
+
+    args = parser.parse_args()
+
+    assert 0.01 <= args.scale <= 100
+    if args.scale == int(args.scale):
+        args.scale = int(args.scale)
+    assert 1 <= args.grayscale_image_quality <= 100
+    assert 1 <= args.color_image_quality <= 100
+    assert 0 <= args.binary_image_save_speed <= 9
+    assert 0 <= args.grayscale_image_save_speed <= 9
+    assert 0 <= args.color_image_save_speed <= 9
+
+    # args.image_format = args.image_format or DEFAULT_IMAGE_FORMAT
+    args.binary_image_format = args.binary_image_format or args.image_format
+    args.grayscale_image_format = args.grayscale_image_format or args.image_format
+    args.color_image_format = args.color_image_format or args.image_format
+
+    # assert re.match(r"^(\d+)x(\d+)\+(\d+)\+(\d+)$", args.crop_pages)
+    # print("PIL.features.codecs", PIL.features.codecs)
+    # print("PIL.features.features", PIL.features.features)
+    # FIXME this fails for args.image_format == "png"
+    # assert PIL.features.check(args.image_format), f"PIL does not support args.image_format {args.image_format!r}"
+    if args.text_format == "html":
+        args.text_format = "xhtml"
+    assert args.text_format in TEXT_FORMAT_LIST
+    assert 1 <= args.jobs <= max_max_workers, f"jobs must be between 1 and {max_max_workers}"
+    for src_path in args.infiles:
+        with open(src_path, "rb") as f: # try to open the file
+            pass
+    for src_path in (args.append_pages + args.add_files):
+        src_path, dst_path = parse_src_dst_path(src_path)
+        with open(src_path, "rb") as f: # try to open the file
+            pass
+    if args.canonical_url_base:
+        if not args.canonical_url_base.endswith("/"):
+            args.canonical_url_base += "/"
+
+    args.text_html_absolute_word_positions = not args.text_html_relative_word_positions
+    # args.text_html_relative_word_positions = not args.text_html_absolute_word_positions
+
+    if not args.text_html_relative_word_positions:
+        args.text_html_relative_word_positions_dynamic_font_width = False
+        args.text_html_relative_word_positions_static_font_width = False
+    else:
+        args.text_html_relative_word_positions_static_font_width = not args.text_html_relative_word_positions_dynamic_font_width
+
+    args.text_html_bundle_font = False
+
+    if args.doc_isbn:
+        pass
+    elif args.doc_identifier:
+        pass
+    else:
+        raise ValueError("document identifier is required. hint: set doc-isbn or doc-identifier")
+
+    process_files_hocr2epubfxl(args)

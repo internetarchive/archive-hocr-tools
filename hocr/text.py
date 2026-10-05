@@ -43,6 +43,80 @@ def hocr_paragraph_text(paragraph):
     return par_text
 
 
+def hocr_paragraph_bbox(paragraph):
+    """
+    xxx
+
+    Args:
+
+    * paragraph: hOCR paragraph as returned by hocr_paragraphs
+
+    Returns:
+
+    * Tuple of (`int`, `int`, `int`, `int`), where xxx
+    """
+    _inf = 999999999999
+    x1, y1, x2, y2 = _inf, _inf, 0, 0
+
+    for line in paragraph['lines']:
+        for word in line['words']:
+            _x1, _y1, _x2, _y2 = word['bbox']
+            if _x1 < x1: x1 = _x1
+            if _y1 < y1: y1 = _y1
+            if _x2 > x2: x2 = _x2
+            if _y2 > y2: y2 = _y2
+
+    if (x1, y1, x2, y2) == (_inf, _inf, 0, 0):
+        return None # no words in paragraph
+    return x1, y1, x2, y2
+
+
+def hocr_page_bbox(page):
+    """
+    xxx
+
+    Args:
+
+    * page: hOCR page as returned by hocr_page_iterator
+
+    Returns:
+
+    * Tuple of (`int`, `int`, `int`, `int`), where xxx
+    """
+    word_data = hocr_page_to_word_data(page)
+    return hocr_word_data_bbox(word_data)
+
+
+def hocr_word_data_bbox(word_data):
+    """
+    xxx
+
+    Args:
+
+    * word_data: hOCR word_data as returned by hocr_page_to_word_data
+
+    Returns:
+
+    * Tuple of (`int`, `int`, `int`, `int`), where xxx
+    """
+    _inf = 999999999999
+    x1, y1, x2, y2 = _inf, _inf, 0, 0
+
+    for paragraph in word_data:
+        # _x1, _y1, _x2, _y2 = hocr_paragraph_bbox(paragraph)
+        for line in paragraph['lines']:
+            for word in line['words']:
+                _x1, _y1, _x2, _y2 = word['bbox']
+                if _x1 < x1: x1 = _x1
+                if _y1 < y1: y1 = _y1
+                if _x2 > x2: x2 = _x2
+                if _y2 > y2: y2 = _y2
+
+    if (x1, y1, x2, y2) == (_inf, _inf, 0, 0):
+        return None # no words in word_data
+    return x1, y1, x2, y2
+
+
 def hocr_page_text_from_word_data(word_data):
     """
     Extract text from a pre-parsed hOCR page

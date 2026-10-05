@@ -6,6 +6,9 @@ ver_path = convert_path('hocr/version.py')
 with open(ver_path) as ver_file:
     exec(ver_file.read(), main_ns)
 
+with open('requirements.txt') as f:
+    install_requires = f.read().splitlines()
+
 version = main_ns['__version__']
 setup(name='archive-hocr-tools',
       version=version,
@@ -25,6 +28,8 @@ setup(name='archive-hocr-tools',
                'bin/abbyy-to-hocr', 'bin/hocr-split-pages',
                'bin/hocr-flatten-pages', 'bin/hocr-confidence-filter',
                'bin/hocr-to-epub', 'bin/pdf-to-hocr',
+               'bin/hocr-to-epub-fxl',
+               'bin/hocr-svg',
                'bin/hocr-pagenumbers', 'bin/hocr-to-daisy'],
       classifiers=[
           'Development Status :: 3 - Alpha',
@@ -34,7 +39,7 @@ setup(name='archive-hocr-tools',
       ],
       python_requires='>=3.6',
       include_package_data=True,
-      install_requires=[],
+      install_requires=install_requires,
       extras_require={
           'daisy': ['archive-ocr-tools==1.0.4', 'ebooklib==0.17.1'],
           'epub': ['ebooklib==0.17.1', 'internetarchive-deriver-module', 'archive-ocr-tools==1.0.4'],
