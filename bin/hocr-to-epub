@@ -294,6 +294,14 @@ class EpubGenerator(object):
         p {
             text-indent: 4em;
         }
+        .pagebreak {
+            float: right;
+            color: #888;
+            font-size: 0.75em;
+            font-weight: normal;
+            font-style: normal;
+            margin-left: 0.5em;
+        }
         """
 
     strip_whitespaces = True
@@ -359,9 +367,24 @@ class EpubGenerator(object):
                 if sd_pages[cover_page].get('clothCover', None) == 'true':
                     self.cover_pages = []
                     break
+
+            # Map leaf -> printed page number from the scandata page entries,
+            # skipping leaves excluded from access formats. Used as-is (no
+            # interpolation). NOTE: the page entries carry ~40 duplicated
+            # numbers in irregular regions (e.g. page 11 on leaves 33 and 35);
+            # if unique page-list targets are wanted later, reconcile against
+            # the pageNumData assertions (the confirmed anchors) and keep those.
+            self.page_numbers = {}
+            for p in sd_pages:
+                if str(p.get('addToAccessFormats', 'true')).lower() == 'false':
+                    continue
+                num = str(p.get('pageNumber') or '').strip()
+                if num:
+                    self.page_numbers[int(p['@leafNum'])] = num
         else:
             self.skip_pages = []
             self.cover_pages = []
+            self.page_numbers = {}
 
         print("Parsing file %s" % self.hocr_xml_file_path)
         self.generate()
@@ -614,6 +637,20 @@ class EpubGenerator(object):
                             sizes.append(word['fontsize'])
         return hocr.structure.body_size(sizes)
 
+    def _pagebreak_marker(self, leaf):
+        """EPUB pagebreak marker for this leaf's printed page number, or None.
+
+        This is what ebooklib's page-list scans for; the element text becomes
+        the page-list label. There is one marker per page file, so the leaf
+        number is a safe unique anchor.
+        """
+        num = self.page_numbers.get(leaf)
+        if not num:
+            return None
+        return ('<span xmlns:epub="http://www.idpf.org/2007/ops" '
+                'epub:type="pagebreak" class="pagebreak" title="%s" id="pg%d">%s</span>'
+                % (html.escape(num), leaf, html.escape(num)))
+
     def generate(self, warn_confidence_threshold=75.0, remove_confidence_threshold=None):
         self.book = epub.EpubBook()
         self.book.reset()
@@ -802,6 +839,9 @@ class EpubGenerator(object):
                 page_epub.add_link(
                     href='style/style.css', rel='stylesheet', type='text/css'
                 )
+                marker = self._pagebreak_marker(page_idx)
+                if marker:
+                    page_html = marker + page_html
                 page_epub.set_content(page_html)
                 pages_epub.append(page_epub)
                 if page_headings:
