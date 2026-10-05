@@ -108,3 +108,24 @@ def front_matter_type(text):
         if low.startswith(needle):
             return kind
     return None
+
+
+def is_chapter(text):
+    """True if the text opens with a chapter marker.
+
+    Narrower than ``CHAPTER_RE`` (which also matches front-matter titles
+    like CONTENTS); used to find where the body matter starts.
+    """
+    return bool(re.match(r"(?i)chapter\b", (text or '').strip()))
+
+
+def is_toc_entry(text):
+    """True if a heading belongs in the table of contents.
+
+    Matches the structural vocabulary or a front-matter type, so chapters,
+    contents, index, illustrations and similar sections are included, while
+    a large-font display line or OCR gibberish that merely got classified as
+    a heading is not.
+    """
+    text = (text or '').strip()
+    return bool(CHAPTER_RE.match(text)) or front_matter_type(text) is not None

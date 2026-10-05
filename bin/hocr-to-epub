@@ -552,6 +552,8 @@ class EpubGenerator(object):
         features = []
         if self.has_text:
             features.append('displayTransformability')
+        if self.toc_entries:
+            features.append('structuralNavigation')
         if not features:
             features = ['none']
 
@@ -659,6 +661,8 @@ class EpubGenerator(object):
         # Iterate all the pages
         images_found = 0
         words_found = 0
+        # Level-1 headings collected per page as (page_file, [titles]).
+        self.page_h1 = []
         for page_idx, page in enumerate(pages_hocr):
             if page_idx in self.skip_pages:
                 continue
@@ -671,6 +675,8 @@ class EpubGenerator(object):
             # Collect blocks as (top_y, html) so horizontal separators can be
             # interleaved with the text in reading order.
             page_blocks = []
+            # Level-1 heading titles on this page, for the table of contents.
+            page_headings = []
             page_confidence = 0
             words_on_page = 0
             # ABBYY converter sometimes identifies linebreaks as a negation sign
@@ -718,6 +724,8 @@ class EpubGenerator(object):
                     level = kind[1]
                     page_blocks.append(
                         (top_y, u"<h%d>%s</h%d>" % (level, page_text, level)))
+                    if level == 1:
+                        page_headings.append(html.unescape(page_text))
                 else:
                     page_blocks.append((top_y, u"<p>%s</p>" % page_text))
 
@@ -796,6 +804,8 @@ class EpubGenerator(object):
                 )
                 page_epub.set_content(page_html)
                 pages_epub.append(page_epub)
+                if page_headings:
+                    self.page_h1.append((page_epub.file_name, page_headings))
 
         # Apply some transformations to remove headings and page numbers
         # TODO
@@ -805,6 +815,25 @@ class EpubGenerator(object):
         # Add all the pages to the book
         for page_epub in pages_epub:
             self.book.add_item(page_epub)
+
+        # Build the table of contents from the level-1 headings. A page that
+        # lists several chapters is the printed contents page, not a chapter
+        # start, so skip those pages; real chapters each open a page with a
+        # single heading. (Title matching is unreliable here because the OCR of
+        # the contents page adds noise like "CHAPTER IX PAGE".)
+        toc = []
+        contents_href = None
+        for href, titles in self.page_h1:
+            if sum(1 for t in titles if hocr.structure.is_chapter(t)) > 1:
+                if contents_href is None:
+                    contents_href = next(
+                        (href for t in titles
+                         if hocr.structure.front_matter_type(t) == 'toc'),
+                        None)
+                continue
+            toc.extend((href, t) for t in titles
+                      if hocr.structure.is_toc_entry(t))
+        self.toc_entries = toc
 
         self.has_text = words_found > 0
         self.has_images = images_found > 0
@@ -819,9 +848,29 @@ class EpubGenerator(object):
                 self.book.set_cover("cover.jpeg", jpeg_data)
                 cover_set = True
 
-        # We don't have enough information to create TOC/chapters/sections yet
-        #book.toc = pages_epub
-        self.book.toc = (front_matter_epub,)
+        # Table of contents from the level-1 headings (chapters and front-matter
+        # titles), each linking to the page it starts on.
+        self.book.toc = [
+            epub.Link(href, title, 'toc_%d' % i)
+            for i, (href, title) in enumerate(self.toc_entries)
+        ]
+
+        # Landmarks: the key entry points a reader wants to jump to.
+        guide = []
+        if cover_set:
+            guide.append({'type': 'cover', 'title': 'Cover', 'href': 'cover.jpeg'})
+        if contents_href:
+            guide.append({'type': 'toc', 'title': 'Contents', 'href': contents_href})
+        bodymatter_set = False
+        for href, title in self.toc_entries:
+            fm = hocr.structure.front_matter_type(title)
+            if fm and fm != 'toc':
+                guide.append({'type': fm, 'title': title, 'href': href})
+            elif not bodymatter_set and hocr.structure.is_chapter(title):
+                guide.append({'type': 'bodymatter', 'title': title, 'href': href})
+                bodymatter_set = True
+        self.book.guide = guide
+
         self.book.add_item(epub.EpubNcx())
         self.book.add_item(epub.EpubNav())
         if cover_set:
