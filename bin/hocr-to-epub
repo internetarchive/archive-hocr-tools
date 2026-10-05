@@ -653,7 +653,7 @@ class EpubGenerator(object):
                     image_epub.set_content(cropped_jpeg_data)
 
                     self.book.add_item(image_epub)
-                    page_html += "<img src=\"%s\" alt=\"Image %u\"/>" % (image_filename_epub, images_found)
+                    page_html += "<img src=\"%s\" alt=\"\"/>" % (image_filename_epub)
                     images_found += 1
                     images_on_page += 1
 
