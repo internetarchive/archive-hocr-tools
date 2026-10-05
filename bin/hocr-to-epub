@@ -16,6 +16,7 @@ from PIL import Image
 
 import hocr.parse
 import hocr.util
+import hocr.structure
 
 try:
     from derivermodule.metadata import parse_item_metadata
@@ -593,6 +594,24 @@ class EpubGenerator(object):
             )
 
 
+    def _compute_body_size(self, sample_pages=200):
+        """Modal word font size across a sample of pages (the body text size).
+
+        Sampled rather than whole-book so it does not need a second full
+        parse; the body size is stable across a book.
+        """
+        sizes = []
+        for i, page in enumerate(
+                hocr.parse.hocr_page_iterator(self.hocr_xml_file_path)):
+            if i >= sample_pages:
+                break
+            for element in hocr.parse.hocr_page_to_word_data(page):
+                for line in element['lines']:
+                    for word in line['words']:
+                        if word['fontsize']:
+                            sizes.append(word['fontsize'])
+        return hocr.structure.body_size(sizes)
+
     def generate(self, warn_confidence_threshold=75.0, remove_confidence_threshold=None):
         self.book = epub.EpubBook()
         self.book.reset()
@@ -631,6 +650,8 @@ class EpubGenerator(object):
 
         print('Detected OCR system:', ocr_system)
 
+        body_size = self._compute_body_size()
+
         pages_hocr = hocr.parse.hocr_page_iterator(self.hocr_xml_file_path)
         pages_epub = []
         pages_epub.append(front_matter_epub)
@@ -647,13 +668,16 @@ class EpubGenerator(object):
             # Get all the photos on the page
             photo_boxes = hocr.parse.hocr_page_to_photo_data(page)
 
-            page_content = []
+            # Collect blocks as (top_y, html) so horizontal separators can be
+            # interleaved with the text in reading order.
+            page_blocks = []
             page_confidence = 0
             words_on_page = 0
             # ABBYY converter sometimes identifies linebreaks as a negation sign
             hyphens = ['-', '¬']
             # Build the page content while preserving the paragraph structure
-            # from the hOCR. Each paragraph becomes its own <p> element.
+            # from the hOCR. Each paragraph becomes its own <p> element, or a
+            # heading when it looks like one.
             for element in word_data:
                 line_content = []
                 for line in element['lines']:
@@ -685,10 +709,45 @@ class EpubGenerator(object):
                 # line break within this paragraph.
                 page_text = ' '.join(line_content)
                 page_text = page_text.replace(' \x7f ', '')
-                page_content.append(u"<p>%s</p>" % page_text)
 
-            # Combine the per-paragraph HTML blocks into the page content.
-            page_html = ''.join(page_content)
+                top_y = element['lines'][0]['bbox'][1] if element['lines'] else 0
+                fontsize = max((w['fontsize'] for ln in element['lines']
+                               for w in ln['words']), default=0.0)
+                kind = hocr.structure.classify(page_text, fontsize, body_size)
+                if kind[0] == 'heading':
+                    level = kind[1]
+                    page_blocks.append(
+                        (top_y, u"<h%d>%s</h%d>" % (level, page_text, level)))
+                else:
+                    page_blocks.append((top_y, u"<p>%s</p>" % page_text))
+
+            # Horizontal separators become thematic breaks. Skip the running-head
+            # underline near the top of the page and any thick non-rule blocks.
+            try:
+                _pw, page_height = hocr.parse.hocr_page_get_dimensions(page)
+            except Exception:
+                page_height = 0
+            if page_height:
+                seps = []
+                for sep in page.findall('.//*[@class="ocr_separator"]'):
+                    box = hocr.parse.BBOX_REGEX.search(sep.get('title', ''))
+                    if not box:
+                        continue
+                    _x0, y0, _x1, y1 = (int(v) for v in box.group(1).split())
+                    if (y1 - y0) <= 20 and y0 > 0.15 * page_height:
+                        seps.append(y0)
+                # Insert each separator before the first block below it so the
+                # paragraph reading order is preserved.
+                for y0 in sorted(seps):
+                    idx = len(page_blocks)
+                    for i, (ty, _h) in enumerate(page_blocks):
+                        if ty > y0:
+                            idx = i
+                            break
+                    page_blocks.insert(idx, (y0, '<hr/>'))
+
+            # Combine the blocks into the page content.
+            page_html = ''.join(h for _y, h in page_blocks)
 
             # Add a warning if the confidence in the text is below the given threshold
             if words_on_page:
