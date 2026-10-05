@@ -543,7 +543,17 @@ class EpubGenerator(object):
                 OrderedDict([('property', 'schema:accessModeSufficient')])
             )
 
-        features = ['none', ]
+        # Derive the accessibility features from what this build actually emitted
+        # instead of asserting a fixed value. Add a feature here only when the
+        # corresponding affordance is present in the output (a real ToC, page-list
+        # markers, meaningful alt text, headings...). Fall back to "none" only
+        # when nothing applies.
+        features = []
+        if self.has_text:
+            features.append('displayTransformability')
+        if not features:
+            features = ['none']
+
         for feature in features:
             self.book.add_metadata(
                 None,
