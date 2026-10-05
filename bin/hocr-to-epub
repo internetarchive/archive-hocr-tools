@@ -278,7 +278,8 @@ class EpubGenerator(object):
                  scandata_xml_file_path: Optional[str] = None,
                  epub_zip_file_path: Optional[str] = None,
                  use_kakadu: bool = False,
-                 ignore_broken_images: bool = False):
+                 ignore_broken_images: bool = False,
+                 image_kinds: Optional[set] = None):
 
         # Copy arguments to locals
         self.hocr_xml_file_path = hocr_xml_file_path
@@ -286,6 +287,7 @@ class EpubGenerator(object):
         self.image_stack_zip_file_path = image_stack_zip_file_path
         self.scandata_xml_file_path = scandata_xml_file_path
         self.epub_zip_file_path = epub_zip_file_path
+        self.image_kinds = set(image_kinds or [])
 
         # Set sensible defaults for arguments that weren't provided
         if not self.meta_xml_file_path:
@@ -639,6 +641,8 @@ class EpubGenerator(object):
 
             # Add all the images from the page
             images_on_page = 0
+            if 'photos' not in self.image_kinds:
+                photo_boxes = []
             for image_idx, box in enumerate(photo_boxes):
                 # Treat first cover image as special case
                 if page_idx not in self.cover_pages[:1]:
@@ -686,17 +690,20 @@ class EpubGenerator(object):
         self.set_accessibility_metadata()
 
         # Set cover
-        if len(self.cover_pages):
+        cover_set = False
+        if 'cover' in self.image_kinds and self.img_stack is not None and len(self.cover_pages):
             image_filename = self.img_stack.crop_image(self.cover_pages[0], None)
-            jpeg_data = open(image_filename, "rb").read()
-            self.book.set_cover("cover.jpeg", jpeg_data)
+            if image_filename:
+                jpeg_data = open(image_filename, "rb").read()
+                self.book.set_cover("cover.jpeg", jpeg_data)
+                cover_set = True
 
         # We don't have enough information to create TOC/chapters/sections yet
         #book.toc = pages_epub
         self.book.toc = (front_matter_epub,)
         self.book.add_item(epub.EpubNcx())
         self.book.add_item(epub.EpubNav())
-        if len(self.cover_pages):
+        if cover_set:
             self.book.spine = ['cover', 'nav', ] + pages_epub
         else:
             self.book.spine = ['nav', ] + pages_epub
@@ -721,6 +728,9 @@ if __name__ == '__main__':
     parser.add_argument('--kakadu', help='Use kakadu is available', action='store_true')
     parser.add_argument('--ignore-broken-images', help='Continue even if kakadu cannot use an image',
                         action='store_true')
+    parser.add_argument('--images', help='Image kinds to embed (repeatable): "photos" for '
+                        'per-page illustrations, "cover" for the cover image. Default: none.',
+                        action='append', choices=['photos', 'cover'], default=None)
     args = parser.parse_args()
 
     if not args.infile:
@@ -737,4 +747,5 @@ if __name__ == '__main__':
         args.scandata,
         args.outfile,
         use_kakadu=args.kakadu,
-        ignore_broken_images=args.ignore_broken_images)
+        ignore_broken_images=args.ignore_broken_images,
+        image_kinds=set(args.images or []))
