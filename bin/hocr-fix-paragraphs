@@ -17,15 +17,13 @@ one paragraph.
 """
 
 import sys
-import re
 import argparse
 from xml.etree import ElementTree
 
-from hocr.parse import hocr_page_iterator, hocr_page_get_dimensions
+from hocr.parse import (hocr_page_iterator, hocr_page_get_dimensions,
+                       BBOX_REGEX)
 from hocr.util import (open_if_required, get_header_footer, elem_tostring,
                       register_and_nuke_xhtml_namespace)
-
-BBOX_REGEX = re.compile(r'bbox((\s+-?\d+){4})')
 
 
 def parse_bbox(title):
