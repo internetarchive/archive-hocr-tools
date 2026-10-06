@@ -125,3 +125,47 @@ which would make every page-list target unique. Not done now per the
 **Remaining:** pageBreakSource if a reader needs provenance; printed numbers
 in the ToC entries themselves.
 
+## Round 2 — P&P / Book of Love feedback (Ace 1.3 + epubcheck + Kobo)
+
+The colleague ran the branch against two more books — `prideprejudice00aust`
+and `bookoflovenovel0000link` — through Ace 1.3, epubcheck, and a Kobo device
+(feedback in `/tmp/Epub Branch Fixes 10_6.pdf`). Both are now in
+`epub-improvement-files/` (hOCR + meta + scandata, no jp2). All reported
+issues reproduced on P&P.
+
+**Fixed this round:**
+
+- **Pagebreak span (fix 5)** — was `<span epub:type="pagebreak" class="pagebreak"
+  title="N" id="pgN">N</span>` with `#888` CSS: no matching ARIA role, 3.54:1
+  contrast fail, and the number spoken twice (text + `title`). Now an empty span
+  with `role="doc-pagebreak"` and `aria-label="N"`; the page-list label comes
+  from `aria-label` (verified `get_pages` reads it). Dead `.pagebreak` CSS
+  removed. Clears `epub-type-has-matching-role` and `color-contrast`.
+- **Nav not first in reading order** — the nav was linear and first, so Kobo
+  (which ignores `hidden` on `<nav>`) opened the book on the page-list. Spine
+  now `('nav', 'no')`, matching the cover.
+- **META under-declares** — added `tableOfContents`, `pageBreakMarkers`,
+  `pageNavigation` (markers and the page-list that navigates them are
+  deliberately two separate features).
+- **pageBreakSource (fix 7)** — required by Ace once a page-list ships, and
+  good provenance. Composed from `meta.xml` title/publisher/date + the
+  archive.org access URL, e.g. "Pride and prejudice. London : George Allen.
+  1894. http://www.archive.org/details/prideprejudice00aust".
+- **Cover in text-only builds** — decoupled from `--images`. The cover is the
+  book's identity, not a content photo, so it now emits whenever there is an
+  image stack and a non-cloth cover page. Verified on a de-clothed Huck:
+  `cover.jpeg` + `cover.xhtml` + `properties="cover-image"` + `epub:type="cover"`
+  landmark, with no `--images`.
+
+**Still open — the running-head cluster (fixes 1–3), the real work:**
+`classify()` returns `('heading', 1)` on `CHAPTER_RE.match` before the
+`RUNNING_HEAD_RATIO` guard, so running heads that start with a structural word
+become headings and build the ToC. On P&P: 66 ToC entries including 7
+`PREFACE. xi/xiii/…` running heads, no `CHAPTER I`/`IV`, `CHAPTER XL` (mangled
+XI); 148 headings for 61 chapters. The correct discriminator is position +
+recurrence (a running head repeats at the top of many consecutive pages), which
+needs a cross-page pass we don't have yet. Until then `structuralNavigation` is
+over-claimed.
+
+Tests unchanged (7 pre-existing `FileNotFoundError` failures, 43 pass).
+
