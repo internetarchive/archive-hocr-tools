@@ -23,6 +23,42 @@
 
 ## Status
 
+### Current status (as of Round 2)
+
+| Item | Status | Notes |
+|------|--------|-------|
+| LANG | ✅ done | real `dc:language` + page `lang` (`28af5eb`, `7db9fcd`). **New gap:** `xml:lang` on the OPF `<package>` still missing — see New tasks. |
+| PAGENAV | ✅ done | page-list from scandata page numbers + `pageBreakSource` (`5ce98b5`, `4fb6977`) |
+| TOC | ✅ done | real ToC + landmarks (`a42c5ce`); running-head pollution open — see New tasks |
+| ALT | ✅ done | `alt=""` (`766f38a`) |
+| META | ✅ done | features derived from emitted content (`289c21f`, `4fb6977`) |
+| WCAG | ✅ done | false conformance claim removed (`ae92103`); full checker still a TODO |
+| NOIMG | ✅ done | `--images` allowlist (`8a78e5c`); cover now decoupled from it (`4fb6977`) |
+| PROSE | ✅ done | `hocr-fix-paragraphs` (`1dab0e6`) |
+| STRUCT | 🟡 partial | headings + `<hr>` done (`dfd819e`); **running-head furniture fix open** |
+| READORDER | ⬜ open | multi-column reading order |
+| IMGPOS | ⬜ open | image position vs caption |
+| HYPHEN | ⬜ open | soft-hyphen join correctness |
+| BLANKS | ⬜ open | empty-crop detection |
+| CONFWARN | ⬜ open | low-confidence warning UX |
+| REPASS | ⬜ open | model re-OCR pass |
+| REDO | ⬜ open | one-click rebuild + patron report |
+| FILEDATE | ⬜ open | build date in filename |
+
+### New tasks (from Round 2 — P&P + Book of Love feedback)
+
+1. **Running-head furniture fix (the big one).** The repeated top-of-page
+   labels ("running heads") start with structural words and get promoted to
+   headings, polluting the ToC — `classify()` returns a heading on the
+   `CHAPTER_RE` match *before* the running-head size guard can run. Fix: a
+   cross-page pass that flags a line as furniture when the same text repeats
+   at the top of many consecutive pages, and keeps it out of headings and the
+   ToC. Until this lands, `structuralNavigation` is over-claimed.
+2. **`xml:lang` on the OPF `<package>` element (fix 8).** Ace's `epub-lang`
+   wants the language on the package element itself, not only in
+   `dc:language`. ebooklib hardcodes the package attributes, so this needs a
+   writer subclass or post-processing the generated `content.opf`.
+
 ### Reproduction runbook
 
 Iterate against the Huckleberry Finn test item in `epub-improvement-files/` using the `venv3.14` virtualenv. Full run takes ~30s.
@@ -98,13 +134,15 @@ pagenumber tool).
 **Implementation:**
 - Build a leaf → printed-number map from the scandata page entries, skipping
   leaves with `addToAccessFormats="false"` and empty numbers.
-- Prepend a pagebreak marker to each numbered page:
-  `<span epub:type="pagebreak" class="pagebreak" title="N" id="pgLEAF">N</span>`
-  (inline `xmlns:epub` so it is self-contained).
+- Prepend a pagebreak marker to each numbered page. **Current form (after
+  Round 2):** an empty `<span epub:type="pagebreak" role="doc-pagebreak"
+  aria-label="N" id="pgLEAF"></span>` (inline `xmlns:epub` so it is
+  self-contained). The number lives in `aria-label`, not as visible text —
+  see the Round 2 section for why.
 - ebooklib's `epub3_pages` (default on) scans those markers and builds the
   **page-list** nav automatically.
-- `.pagebreak` CSS renders the number as a subtle right-floated folio so it
-  reads as a margin marker, not body text.
+- (The original `.pagebreak` folio CSS was removed in Round 2 when the marker
+  became an empty span.)
 
 **Result on the fixture:** 407 pagebreak markers → 407 page-list entries
 (`page_24.html#pg24` → 2 … `page_450.html#pg450` → 388).
@@ -120,10 +158,11 @@ colliding with the next confirmed anchor.
 which would make every page-list target unique. Not done now per the
 "use as-is" decision.
 
-**`pageBreakSource`:** not emitted (barely used by readers).
+**`pageBreakSource`:** now emitted (added in Round 2 — required by Ace once a
+page-list ships). Composed from `meta.xml` title/publisher/date + the
+archive.org access URL; the full-citation format was kept by decision.
 
-**Remaining:** pageBreakSource if a reader needs provenance; printed numbers
-in the ToC entries themselves.
+**Remaining:** printed numbers in the ToC entries themselves.
 
 ## Round 2 — P&P / Book of Love feedback (Ace 1.3 + epubcheck + Kobo)
 
