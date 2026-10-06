@@ -294,14 +294,6 @@ class EpubGenerator(object):
         p {
             text-indent: 4em;
         }
-        .pagebreak {
-            float: right;
-            color: #888;
-            font-size: 0.75em;
-            font-weight: normal;
-            font-style: normal;
-            margin-left: 0.5em;
-        }
         """
 
     strip_whitespaces = True
@@ -576,7 +568,14 @@ class EpubGenerator(object):
         if self.has_text:
             features.append('displayTransformability')
         if self.toc_entries:
+            features.append('tableOfContents')
             features.append('structuralNavigation')
+        if self.page_numbers:
+            # Markers in the content and the page-list that navigates them are
+            # deliberately two separate features (split in 2023; the
+            # deprecated printPageNumbers conflated them).
+            features.append('pageBreakMarkers')
+            features.append('pageNavigation')
         if not features:
             features = ['none']
 
@@ -640,21 +639,58 @@ class EpubGenerator(object):
     def _pagebreak_marker(self, leaf):
         """EPUB pagebreak marker for this leaf's printed page number, or None.
 
-        This is what ebooklib's page-list scans for; the element text becomes
-        the page-list label. There is one marker per page file, so the leaf
-        number is a safe unique anchor.
+        The marker is what ebooklib's page-list scans for. It is an empty span
+        carrying the number in aria-label (not as visible text) plus
+        role="doc-pagebreak" so the epub:type has a matching ARIA role: this
+        avoids the contrast failure and the page number being spoken twice at
+        every boundary. There is one marker per page file, so the leaf number
+        is a safe unique anchor.
         """
         num = self.page_numbers.get(leaf)
         if not num:
             return None
         return ('<span xmlns:epub="http://www.idpf.org/2007/ops" '
-                'epub:type="pagebreak" class="pagebreak" title="%s" id="pg%d">%s</span>'
-                % (html.escape(num), leaf, html.escape(num)))
+                'epub:type="pagebreak" role="doc-pagebreak" aria-label="%s" '
+                'id="pg%d"></span>'
+                % (html.escape(num), leaf))
+
+    def _add_page_break_source(self):
+        """Emit pageBreakSource identifying the scanned edition.
+
+        Validators require it whenever a reflowable EPUB ships an authored
+        page-list, and it is useful provenance regardless: it says which
+        printed edition the page numbers refer to.
+        """
+        if not self.page_numbers:
+            return
+
+        def first(value):
+            if isinstance(value, list):
+                return value[0] if value else None
+            return value
+
+        url = first(self.metadata.get('identifier-access'))
+        if not url:
+            ident = first(self.metadata.get('identifier'))
+            if ident:
+                url = 'https://archive.org/details/%s' % ident
+        parts = [p for p in (first(self.metadata.get('title')),
+                            first(self.metadata.get('publisher')),
+                            first(self.metadata.get('date'))) if p]
+        citation = '. '.join(parts)
+        if url:
+            citation = (citation + '. ' + url) if citation else url
+        if citation:
+            self.book.add_metadata(
+                None, 'meta', citation,
+                OrderedDict([('property', 'pageBreakSource')])
+            )
 
     def generate(self, warn_confidence_threshold=75.0, remove_confidence_threshold=None):
         self.book = epub.EpubBook()
         self.book.reset()
         self.set_metadata()
+        self._add_page_break_source()
 
         css_file = epub.EpubItem(
             uid="style_nav",
@@ -879,9 +915,11 @@ class EpubGenerator(object):
         self.has_images = images_found > 0
         self.set_accessibility_metadata()
 
-        # Set cover
+        # Set cover. The cover is the book's identity, not a content photo, so
+        # it is emitted whenever there is an image stack and a detected cover
+        # page, regardless of --images (which only gates the photo loop).
         cover_set = False
-        if 'cover' in self.image_kinds and self.img_stack is not None and len(self.cover_pages):
+        if self.img_stack is not None and len(self.cover_pages):
             image_filename = self.img_stack.crop_image(self.cover_pages[0], None)
             if image_filename:
                 jpeg_data = open(image_filename, "rb").read()
@@ -913,10 +951,14 @@ class EpubGenerator(object):
 
         self.book.add_item(epub.EpubNcx())
         self.book.add_item(epub.EpubNav())
+        # The nav document must not be first in the linear reading order: some
+        # readers (e.g. Kobo) ignore hidden="hidden" on <nav>, so a linear nav
+        # makes the book open on the page-list. Mark it non-linear, as the cover
+        # already is.
         if cover_set:
-            self.book.spine = ['cover', 'nav', ] + pages_epub
+            self.book.spine = ['cover', ('nav', 'no')] + pages_epub
         else:
-            self.book.spine = ['nav', ] + pages_epub
+            self.book.spine = [('nav', 'no')] + pages_epub
         epub.write_epub(self.epub_zip_file_path, self.book, {})
 
 
