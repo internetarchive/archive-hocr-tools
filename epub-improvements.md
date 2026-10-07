@@ -208,7 +208,6 @@ Tests unchanged (7 pre-existing `FileNotFoundError` failures, 43 pass) plus
 
 
 ## Round 3 — running-head furniture pass + package xml:lang + notice date
-
 - [x] STRUCT/TOC — **Running-head furniture pass** in `bin/hocr-to-epub`
   (`_collect_running_heads` / `_decide_furniture`, plus
   `hocr/structure.py` helpers). Running heads repeat at the top of many
@@ -262,3 +261,26 @@ Tests unchanged (7 pre-existing `FileNotFoundError` failures, 43 pass) plus
   the mangled `CHAPTER XL` + one OCR-noise entry (pre-existing OCR
   issues, not furniture); Book of Love carries the title-page `BOOK` and
   colophon `BOOK DESIGN BY CAROLINE CUNNINGHAM` entries.
+- [x] CONFWARN — **low-confidence warnings moved out of the reading
+  flow**. The `<b>The text on this page is estimated to be only X%
+  accurate</b>` prefix interrupted every affected page (on P&P that was
+  *every* page — the ABBYY scan reports a 28% median word confidence, so
+  the threshold fires book-wide) with a number the reader cannot act on
+  and cannot dismiss. The warning now lives in the notice page the
+  reader sees once at the start (`_confidence_notice`):
+  - few affected pages (<= 25 and <= 10% of pages): a list — printed
+    page numbers where the scan recorded them ("printed pages 626, 630"),
+    otherwise scan/leaf references ("scan pages 4, 5, 11"); the
+    percentage is not announced;
+  - many affected pages: one honest sentence ("The OCR quality is poor
+    throughout this book (all 501 scanned pages); the text may contain
+    many errors.");
+  - pages skipped entirely for unreadability (only when a caller sets
+    `remove_confidence_threshold`) are listed as missing.
+  The `schema:accessibilitySummary` gains "Pages with poor OCR quality
+  are listed in the notice at the beginning of the book." so the
+  catalogue entry points at it. The per-page log line is kept for
+  operators. Verified on all three fixtures: zero inline warnings remain;
+  P&P shows the book-wide sentence, BoL and Huck the short lists; Huck's
+  ToC unchanged (45 entries). Tests: `tests/test_hocr_to_epub_confwarn.py`
+  (8).
