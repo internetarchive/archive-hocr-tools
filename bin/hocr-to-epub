@@ -9,6 +9,7 @@ import zipfile
 import html
 
 from collections import OrderedDict
+from datetime import datetime, timezone
 from typing import List, Optional
 
 from ebooklib import epub
@@ -41,6 +42,14 @@ KAKADU_ERRORS = [
 OCR_SYSTEM_TESSERACT = 'Tesseract'
 OCR_SYSTEM_ABBYY = 'ABBYY'
 OCR_SYSTEM_UNKNOWN = 'Unknown'
+
+# Running-head furniture detection: lines that repeat at the top of many
+# pages (running heads, embedded folios) are dropped from the text, the
+# headings and the ToC. See _collect_running_heads for the rules.
+FURNITURE_TOP_BAND = 0.12
+FURNITURE_MIN_PAGES = 2
+FURNITURE_RUN_GAP = 5
+FURNITURE_PREFIX_TOKENS = 2
 
 if os.path.exists('/var/tmp/fast'):
     WORKING_DIR = '/var/tmp/fast/'
@@ -194,6 +203,35 @@ class ImageStack(object):
                 os.unlink(tempfile)
         except:
             pass
+
+
+class LangEpubWriter(epub.EpubWriter):
+    """EpubWriter that puts ``xml:lang`` on the ``<package>`` element.
+
+    ebooklib hardcodes the package attributes, but validators (Ace's
+    ``epub-lang``) want the language on the package element itself, not
+    only as a dc:language entry.
+    """
+
+    def __init__(self, name, book, options=None, language=None):
+        super().__init__(name, book, options)
+        self.xml_lang = language
+
+    def _write_opf_file(self, root):
+        if self.xml_lang:
+            root.set('{http://www.w3.org/XML/1998/namespace}lang',
+                     self.xml_lang)
+        return super()._write_opf_file(root)
+
+
+def write_epub_file(path, book, language=None):
+    """Write the EPUB with :class:`LangEpubWriter` (xml:lang support)."""
+    writer = LangEpubWriter(path, book, {}, language=language)
+    writer.process()
+    try:
+        writer.write()
+    except IOError:
+        pass
 
 
 class PageHtml(epub.EpubHtml):
@@ -686,6 +724,182 @@ class EpubGenerator(object):
                 OrderedDict([('property', 'pageBreakSource')])
             )
 
+    def _clean_heading_title(self, text):
+        """Clean a heading for use as a ToC/landmark title.
+
+        Strips a trailing lowercase roman folio ("PREFACE. xi" ->
+        "PREFACE") and stray punctuation ("Dedication ." ->
+        "Dedication"), while keeping chapter identifiers that are part of
+        the title itself ("CHAPTER XL" stays "CHAPTER XL").
+        """
+        text = (text or '').strip()
+        tokens = text.split()
+        while len(tokens) > 1:
+            last = tokens[-1].rstrip('.,;:')
+            if last and hocr.structure.is_roman_numeral(last) \
+                    and last.islower():
+                tokens.pop()
+                continue
+            break
+        return ' '.join(tokens).rstrip(' .,;:-').strip()
+
+    def _is_furniture_line(self, page_idx, line, page_height):
+        """True if this line was flagged as running-head furniture.
+
+        Recomputes the same normalized key the detection pass used, so the
+        decision is deterministic; lines outside the top band are never
+        dropped.
+        """
+        if not self.furniture_drop:
+            return False
+        if page_height and line['bbox'][1] > FURNITURE_TOP_BAND * page_height:
+            return False
+        raw = ' '.join(w['text'] for w in line['words']).strip()
+        if not raw:
+            return False
+        folio = self.page_numbers.get(page_idx, '')
+        _numeral, rest = hocr.structure.split_folio_token(raw, folio)
+        norm = hocr.structure.normalize_head_text(rest)
+        if len(norm) < 3:
+            return False
+        return (page_idx, norm) in self.furniture_drop
+
+    def _collect_running_heads(self, body_size):
+        """Cross-page pass: find lines that repeat at the top of many pages.
+
+        Running heads ("PRIDE AND PREJUDICE.", "THE BOOK OF LOVE 107",
+        "PREFACE. xi") are not content: they land in the prose as stray
+        lines, get promoted to headings and then pollute the ToC. Font size
+        alone cannot separate them from real section titles — The Book of
+        Love sets both at the same size — so this pass uses position and
+        recurrence:
+
+        * a line in the top band of the page whose normalized text recurs
+          on enough pages joins a "furniture family" (a pair of lines only
+          counts when they read like heads, i.e. are mostly caps, so
+          recurring body text is safe);
+        * occurrences whose text extends a family phrase by a couple of
+          tokens are mangled variants of the same head ("THE BOOK OF LOVE
+          of" for "THE BOOK OF LOVE 107") and join the family;
+        * within a family, occurrences that sit more than
+          FURNITURE_RUN_GAP pages apart are separate runs — a chapter
+          heading that recurs as a running head keeps its first occurrence
+          (the genuine heading) of every run;
+        * an occurrence is kept if it is set at body size or larger, or if
+          it is the first heading-classifying occurrence of its run and the
+          family is not folio-styled (running heads that embed the page's
+          own printed number are never kept).
+
+        Returns the set of ``(page index, normalized text)`` to drop.
+        """
+        occurrences = []
+        for page_idx, page in enumerate(
+                hocr.parse.hocr_page_iterator(self.hocr_xml_file_path)):
+            if page_idx in self.skip_pages:
+                continue
+            try:
+                _width, height = hocr.parse.hocr_page_get_dimensions(page)
+            except Exception:
+                continue
+            if not height:
+                continue
+            limit = FURNITURE_TOP_BAND * height
+            for element in hocr.parse.hocr_page_to_word_data(page):
+                for line in element['lines']:
+                    if not line['words'] or line['bbox'][1] > limit:
+                        continue
+                    raw = ' '.join(w['text'] for w in line['words']).strip()
+                    if not raw:
+                        continue
+                    fontsize = max((w['fontsize'] or 0)
+                                   for w in line['words'])
+                    folio = self.page_numbers.get(page_idx, '')
+                    _numeral, rest = hocr.structure.split_folio_token(
+                        raw, folio)
+                    norm = hocr.structure.normalize_head_text(rest)
+                    if len(norm) < 3:
+                        continue
+                    occurrences.append({'page': page_idx, 'raw': raw,
+                                        'fontsize': fontsize, 'norm': norm})
+        return self._decide_furniture(occurrences, body_size)
+
+    def _decide_furniture(self, occurrences, body_size):
+        """Apply the furniture rules to collected top-band occurrences.
+
+        See :meth:`_collect_running_heads`. Returns the set of
+        ``(page index, normalized text)`` pairs to drop.
+        """
+        by_norm = {}
+        for occurrence in occurrences:
+            occurrence.setdefault('orig_norm', occurrence['norm'])
+            by_norm.setdefault(occurrence['norm'], []).append(occurrence)
+
+        # A real running head recurs a lot; a pair of identical lines is
+        # only trusted when the lines read like heads (mostly caps), so
+        # recurring body text (dialogue, letters) is safe.
+        families = set()
+        for norm, occs in by_norm.items():
+            if len(occs) >= 3 or (
+                    len(occs) >= FURNITURE_MIN_PAGES
+                    and all(hocr.structure.is_mostly_caps(o['raw'])
+                            for o in occs)):
+                families.add(norm)
+        if not families:
+            return set()
+
+        # Mangled variants of a head ("THE BOOK OF LOVE of" for
+        # "THE BOOK OF LOVE 107") join the family of the phrase they
+        # extend, as long as the extension is short.
+        family_norms = sorted(families, key=len, reverse=True)
+        for occurrence in occurrences:
+            if occurrence['norm'] in families:
+                continue
+            for family_norm in family_norms:
+                if occurrence['norm'].startswith(family_norm + ' ') and \
+                        len(occurrence['norm'].split()) - \
+                        len(family_norm.split()) <= FURNITURE_PREFIX_TOKENS:
+                    occurrence['norm'] = family_norm
+                    by_norm[family_norm].append(occurrence)
+                    break
+
+        drop = set()
+        for norm, occs in by_norm.items():
+            if norm not in families:
+                continue
+            occs = sorted(occs, key=lambda o: o['page'])
+            # Occurrences more than FURNITURE_RUN_GAP pages apart belong to
+            # separate runs; each run keeps its first genuine heading.
+            runs = [[occs[0]]]
+            for prev, cur in zip(occs, occs[1:]):
+                if cur['page'] - prev['page'] > FURNITURE_RUN_GAP:
+                    runs.append([cur])
+                else:
+                    runs[-1].append(cur)
+            median_size = sorted(o['fontsize'] for o in occs)[len(occs) // 2]
+            # A family whose occurrences carry the page's own printed folio
+            # at the line edge is a running-head family ("THE BOOK OF LOVE
+            # 9", "29 PRIDE AND PREJUDICE."), so its lines are never kept
+            # as headings even when they classify like one.
+            folio_styled = sum(
+                1 for o in occs
+                if hocr.structure.carries_folio(
+                    o['raw'], self.page_numbers.get(o['page']))) >= 2
+            for run in runs:
+                first_heading = None
+                for occurrence in run:
+                    size = occurrence['fontsize'] or median_size
+                    if size >= body_size:
+                        continue  # body-sized or larger: real text
+                    if not folio_styled and first_heading is None and \
+                            hocr.structure.classify(
+                                occurrence['raw'], occurrence['fontsize'],
+                                body_size)[0] == 'heading':
+                        first_heading = occurrence
+                        continue
+                    drop.add((occurrence['page'],
+                              occurrence['orig_norm']))
+        return drop
+
     def generate(self, warn_confidence_threshold=75.0, remove_confidence_threshold=None):
         self.book = epub.EpubBook()
         self.book.reset()
@@ -701,7 +915,13 @@ class EpubGenerator(object):
         self.book.add_item(css_file)
 
         front_matter_epub = epub.EpubHtml(title='Notice', file_name='notice.html', lang='en', media_type='application/xhtml+xml')
-        front_matter_epub.set_content(self.front_matter)
+        generated_date = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+        front_matter_epub.set_content(
+            self.front_matter.replace(
+                '</p></div>',
+                '</p><p>This EPUB was generated on %s.</p></div>'
+                % generated_date,
+                1))
 
         ocr_system = None
 
@@ -727,6 +947,15 @@ class EpubGenerator(object):
 
         body_size = self._compute_body_size()
 
+        # Cross-page pass to flag running heads (repeated top-of-page
+        # lines) as furniture so they stay out of the prose, the headings
+        # and the ToC.
+        self.furniture_drop = self._collect_running_heads(body_size)
+        if self.furniture_drop:
+            print('Running-head furniture: dropping %d lines on %d pages'
+                  % (len(self.furniture_drop),
+                     len({page for page, _norm in self.furniture_drop})))
+
         pages_hocr = hocr.parse.hocr_page_iterator(self.hocr_xml_file_path)
         pages_epub = []
         pages_epub.append(front_matter_epub)
@@ -745,6 +974,11 @@ class EpubGenerator(object):
             # Get all the photos on the page
             photo_boxes = hocr.parse.hocr_page_to_photo_data(page)
 
+            try:
+                _pw, page_height = hocr.parse.hocr_page_get_dimensions(page)
+            except Exception:
+                page_height = 0
+
             # Collect blocks as (top_y, html) so horizontal separators can be
             # interleaved with the text in reading order.
             page_blocks = []
@@ -760,6 +994,10 @@ class EpubGenerator(object):
             for element in word_data:
                 line_content = []
                 for line in element['lines']:
+                    # Running heads are furniture: they stay out of the
+                    # text, the word/confidence counts and the headings.
+                    if self._is_furniture_line(page_idx, line, page_height):
+                        continue
                     for word in line['words']:
                         # Save text data
                         text = word['text']
@@ -798,16 +1036,13 @@ class EpubGenerator(object):
                     page_blocks.append(
                         (top_y, u"<h%d>%s</h%d>" % (level, page_text, level)))
                     if level == 1:
-                        page_headings.append(html.unescape(page_text))
+                        page_headings.append(
+                            self._clean_heading_title(html.unescape(page_text)))
                 else:
                     page_blocks.append((top_y, u"<p>%s</p>" % page_text))
 
             # Horizontal separators become thematic breaks. Skip the running-head
             # underline near the top of the page and any thick non-rule blocks.
-            try:
-                _pw, page_height = hocr.parse.hocr_page_get_dimensions(page)
-            except Exception:
-                page_height = 0
             if page_height:
                 seps = []
                 for sep in page.findall('.//*[@class="ocr_separator"]'):
@@ -959,7 +1194,8 @@ class EpubGenerator(object):
             self.book.spine = ['cover', ('nav', 'no')] + pages_epub
         else:
             self.book.spine = [('nav', 'no')] + pages_epub
-        epub.write_epub(self.epub_zip_file_path, self.book, {})
+        write_epub_file(self.epub_zip_file_path, self.book,
+                        language=self.language)
 
 
 if __name__ == '__main__':
