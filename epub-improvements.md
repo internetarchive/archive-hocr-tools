@@ -27,15 +27,16 @@
 
 | Item | Status | Notes |
 |------|--------|-------|
-| LANG | ✅ done | real `dc:language` + page `lang` (`28af5eb`, `7db9fcd`). **New gap:** `xml:lang` on the OPF `<package>` still missing — see New tasks. |
+| LANG | ✅ done | real `dc:language` + page `lang` (`28af5eb`, `7db9fcd`); `xml:lang` on the OPF `<package>` added via a `LangEpubWriter` subclass |
 | PAGENAV | ✅ done | page-list from scandata page numbers + `pageBreakSource` (`5ce98b5`, `4fb6977`) |
-| TOC | ✅ done | real ToC + landmarks (`a42c5ce`); running-head pollution open — see New tasks |
+| TOC | ✅ done | real ToC + landmarks (`a42c5ce`); running-head pollution fixed by the furniture pass |
 | ALT | ✅ done | `alt=""` (`766f38a`) |
 | META | ✅ done | features derived from emitted content (`289c21f`, `4fb6977`) |
 | WCAG | ✅ done | false conformance claim removed (`ae92103`); full checker still a TODO |
 | NOIMG | ✅ done | `--images` allowlist (`8a78e5c`); cover now decoupled from it (`4fb6977`) |
 | PROSE | ✅ done | `hocr-fix-paragraphs` (`1dab0e6`) |
-| STRUCT | 🟡 partial | headings + `<hr>` done (`dfd819e`); **running-head furniture fix open** |
+| STRUCT | ✅ done | headings + `<hr>` (`dfd819e`); running-head furniture pass + `THE BOOK OF X` vocabulary (`this round`) |
+| FILEDATE | 🟡 partial | build date emitted in the front-matter notice text; filename left to the caller by decision |
 | READORDER | ⬜ open | multi-column reading order |
 | IMGPOS | ⬜ open | image position vs caption |
 | HYPHEN | ⬜ open | soft-hyphen join correctness |
@@ -47,17 +48,16 @@
 
 ### New tasks (from Round 2 — P&P + Book of Love feedback)
 
-1. **Running-head furniture fix (the big one).** The repeated top-of-page
-   labels ("running heads") start with structural words and get promoted to
-   headings, polluting the ToC — `classify()` returns a heading on the
-   `CHAPTER_RE` match *before* the running-head size guard can run. Fix: a
-   cross-page pass that flags a line as furniture when the same text repeats
-   at the top of many consecutive pages, and keeps it out of headings and the
-   ToC. Until this lands, `structuralNavigation` is over-claimed.
-2. **`xml:lang` on the OPF `<package>` element (fix 8).** Ace's `epub-lang`
-   wants the language on the package element itself, not only in
-   `dc:language`. ebooklib hardcodes the package attributes, so this needs a
-   writer subclass or post-processing the generated `content.opf`.
+1. **Running-head furniture fix (the big one).** DONE — see the work log
+   entry "Running-head furniture pass". `classify()` no longer lets
+   repeated top-of-page labels through to the headings/ToC, and
+   `structuralNavigation` is no longer over-claimed on P&P (60 ToC entries,
+   exactly one `PREFACE`) or Book of Love (102 entries, all 11 section
+   names present).
+2. **`xml:lang` on the OPF `<package>` element (fix 8).** DONE —
+   `LangEpubWriter` subclass injects `xml:lang` on the package element
+   when a language is known; omitted (like the page-level attribute) when
+   none is.
 
 ### Reproduction runbook
 
@@ -197,14 +197,68 @@ issues reproduced on P&P.
   landmark, with no `--images`.
 
 **Still open — the running-head cluster (fixes 1–3), the real work:**
-`classify()` returns `('heading', 1)` on `CHAPTER_RE.match` before the
-`RUNNING_HEAD_RATIO` guard, so running heads that start with a structural word
-become headings and build the ToC. On P&P: 66 ToC entries including 7
-`PREFACE. xi/xiii/…` running heads, no `CHAPTER I`/`IV`, `CHAPTER XL` (mangled
-XI); 148 headings for 61 chapters. The correct discriminator is position +
-recurrence (a running head repeats at the top of many consecutive pages), which
-needs a cross-page pass we don't have yet. Until then `structuralNavigation` is
-over-claimed.
+DONE this round — see the work log entry "Running-head furniture pass".
+Residuals: P&P still misses `CHAPTER I`/`CHAPTER IV` (OCR mangling on those
+openings, not furniture-related) and carries two OCR-noise entries
+(`Chapter 3TJ?VJ`, `CHAPTER XL` twice — the mangled XI); Book of Love carries
+two title-page/colophon entries (`BOOK`, `BOOK DESIGN BY CAROLINE CUNNINGHAM`).
 
-Tests unchanged (7 pre-existing `FileNotFoundError` failures, 43 pass).
+Tests unchanged (7 pre-existing `FileNotFoundError` failures, 43 pass) plus
+81 new tests (`tests/test_structure.py`, `tests/test_hocr_to_epub_furniture.py`).
 
+
+## Round 3 — running-head furniture pass + package xml:lang + notice date
+
+- [x] STRUCT/TOC — **Running-head furniture pass** in `bin/hocr-to-epub`
+  (`_collect_running_heads` / `_decide_furniture`, plus
+  `hocr/structure.py` helpers). Running heads repeat at the top of many
+  pages, so font size alone cannot separate them from real section
+  titles (The Book of Love sets its section titles and its recto running
+  heads at the same size and position). The pass:
+  - collects every line in the top 12% of each page, strips a folio-like
+    leading/trailing token (printed page number, tolerating OCR
+    confusions like `3O` for `30`; roman numerals, grammar-checked so
+    ordinary words like `vivid`/`civil` are not eaten) and normalizes
+    the rest;
+  - phrases recurring on >= 3 pages (or on 2 pages when both lines read
+    like heads, i.e. mostly caps — recurring body text such as dialogue
+    is safe) form a furniture family; mangled variants extending a
+    family phrase by <= 2 tokens join it (`THE BOOK OF LOVE of`);
+  - within a family, occurrences > 5 pages apart are separate runs, so a
+    chapter heading that doubles as its chapter's running head keeps the
+    first occurrence of every run (each chapter survives);
+  - an occurrence is kept if set at body size or larger, or if it is the
+    first heading-classifying occurrence of its run — except in
+    folio-styled families (>= 2 occurrences carrying the page's own
+    printed number at the line edge), whose lines are never kept.
+  - `RUNNING_HEAD_RATIO` raised 0.8 -> 0.85 so the classification guard
+    and the furniture boundary agree (P&P running heads sit at 0.71-0.88
+    of body size, straddling the old 0.8 line).
+- [x] TOC — **`THE BOOK OF X` vocabulary**: new `CHAPTER_THE_RE` matches
+  the structural vocabulary behind a leading article, trusted only for
+  all-caps or enlarged lines so ordinary sentences starting "The book"
+  stay paragraphs. `is_toc_entry()` matches the same condition. ToC and
+  landmark titles are cleaned (`PREFACE. xi` -> `PREFACE`, trailing
+  lowercase-roman folios and stray punctuation stripped; `CHAPTER XL`
+  keeps its numeral).
+- [x] LANG — **`xml:lang` on the OPF `<package>`**: `LangEpubWriter`
+  (ebooklib `EpubWriter` subclass) injects `xml:lang` on the package
+  element when a language is known; omitted when none is, mirroring the
+  page-level behavior. Clears Ace `epub-lang` on P&P and Book of Love.
+- [x] FILEDATE — **generated date in the notice**: the front-matter
+  notice now carries "This EPUB was generated on YYYY-MM-DD" so a patron
+  or admin can tell which copy is current. Filename unchanged by
+  decision (the caller owns naming); `dc:identifier` untouched.
+- [x] Verification across all three fixtures: P&P drops 405 running-head
+  lines, ToC 66 -> 60 entries with exactly one `PREFACE` and a cleaned
+  `Dedication`; Book of Love drops 449 verso-head lines, ToC 0 of 11
+  section names -> 102 entries covering all of them (each `THE BOOK OF
+  X` line in this book is a genuine one-page interlude opening — the
+  drop-cap body after each confirms it); Huck (which has no recurring
+  top-band heads) is byte-identical to HEAD (45 ToC entries).
+  Tests: `tests/test_structure.py` (74), `tests/test_hocr_to_epub_furniture.py`
+  (7); the 7 pre-existing fixture-missing failures are unchanged.
+  Known residuals: P&P still misses `CHAPTER I`/`CHAPTER IV` and carries
+  the mangled `CHAPTER XL` + one OCR-noise entry (pre-existing OCR
+  issues, not furniture); Book of Love carries the title-page `BOOK` and
+  colophon `BOOK DESIGN BY CAROLINE CUNNINGHAM` entries.
