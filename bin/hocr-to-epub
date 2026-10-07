@@ -573,6 +573,9 @@ class EpubGenerator(object):
             modes.append('visual')
             modes_sufficient.append('visual')
             summary += ' This publication is missing meaningful alternative text.'
+        if self.low_confidence_pages or self.skipped_low_confidence_pages:
+            summary += (' Pages with poor OCR quality are listed in the '
+                        'notice at the beginning of the book.')
 
         self.book.add_metadata(
             None,
@@ -742,6 +745,69 @@ class EpubGenerator(object):
                 continue
             break
         return ' '.join(tokens).rstrip(' .,;:-').strip()
+
+    def _page_reference(self, page_idx):
+        """How to refer to a page in the notice: the printed page number
+        when the scan recorded one, otherwise the scanned page (leaf)
+        number. Returns ``(label, is_printed)``.
+        """
+        printed = self.page_numbers.get(page_idx)
+        if printed:
+            return str(printed), True
+        return str(page_idx), False
+
+    def _confidence_notice(self, total_pages):
+        """Notice-page paragraph(s) about low-confidence pages, or ''.
+
+        The per-page "only X% accurate" warning used to be prepended to
+        every affected page, announcing a number mid-reading that the
+        reader cannot act on and cannot dismiss. It now lives in the
+        notice the reader sees once at the start: a short list of affected
+        pages when only a few are affected, otherwise a single honest
+        sentence about the book as a whole.
+        """
+        paragraphs = []
+        if self.low_confidence_pages:
+            count = len(self.low_confidence_pages)
+            # Listing every page is only useful when it stays short.
+            if count <= 25 and count <= 0.10 * max(total_pages, 1):
+                printed = []
+                scanned = []
+                for page_idx, _confidence in self.low_confidence_pages:
+                    label, is_printed = self._page_reference(page_idx)
+                    (printed if is_printed else scanned).append(label)
+
+                def group(labels, singular, plural):
+                    if not labels:
+                        return None
+                    if len(labels) == 1:
+                        return '%s %s' % (singular, labels[0])
+                    return '%s %s' % (plural, ', '.join(labels))
+
+                where = [group(printed, 'printed page', 'printed pages'),
+                         group(scanned, 'scan page', 'scan pages')]
+                paragraphs.append(
+                    '<p>Some pages of this book were scanned at poor '
+                    'quality: %s. The text on these pages may contain '
+                    'many errors.</p>' % ' and '.join(
+                        part for part in where if part))
+            else:
+                if count >= total_pages:
+                    extent = 'all %d scanned pages' % total_pages
+                else:
+                    extent = ('%d of %d scanned pages'
+                              % (count, total_pages))
+                paragraphs.append(
+                    '<p>The OCR quality is poor throughout this book '
+                    '(%s); the text may contain many errors.</p>' % extent)
+        if self.skipped_low_confidence_pages:
+            skipped = ', '.join(
+                'scan page %d' % page_idx for page_idx,
+                _confidence in self.skipped_low_confidence_pages)
+            paragraphs.append(
+                '<p>The following pages could not be read at all and are '
+                'missing from this EPUB: %s.</p>' % skipped)
+        return ''.join(paragraphs)
 
     def _is_furniture_line(self, page_idx, line, page_height):
         """True if this line was flagged as running-head furniture.
@@ -916,12 +982,12 @@ class EpubGenerator(object):
 
         front_matter_epub = epub.EpubHtml(title='Notice', file_name='notice.html', lang='en', media_type='application/xhtml+xml')
         generated_date = datetime.now(timezone.utc).strftime('%Y-%m-%d')
-        front_matter_epub.set_content(
-            self.front_matter.replace(
-                '</p></div>',
-                '</p><p>This EPUB was generated on %s.</p></div>'
-                % generated_date,
-                1))
+        front_matter_text = self.front_matter.replace(
+            '</p></div>',
+            '</p><p>This EPUB was generated on %s.</p></div>'
+            % generated_date,
+            1)
+        front_matter_epub.set_content(front_matter_text)
 
         ocr_system = None
 
@@ -963,6 +1029,12 @@ class EpubGenerator(object):
         # Iterate all the pages
         images_found = 0
         words_found = 0
+        # Pages whose mean word confidence is below the OCR-system warning
+        # threshold (reported in the notice, not in the reading flow), and
+        # pages skipped entirely for unreadability.
+        self.low_confidence_pages = []
+        self.skipped_low_confidence_pages = []
+        pages_with_words = 0
         # Level-1 headings collected per page as (page_file, [titles]).
         self.page_h1 = []
         for page_idx, page in enumerate(pages_hocr):
@@ -1068,13 +1140,16 @@ class EpubGenerator(object):
             # Add a warning if the confidence in the text is below the given threshold
             if words_on_page:
                 page_confidence = page_confidence/words_on_page
+                pages_with_words += 1
 
                 if remove_confidence_threshold and page_confidence < remove_confidence_threshold:
                     print('Skipping page due to low confidence: %0.02f%%' % page_confidence)
+                    self.skipped_low_confidence_pages.append(
+                        (page_idx, page_confidence))
                     continue
                 if page_confidence < warning_confidence_threshold:
                     print('Warning for page due to low confidence: %.02f%%' % page_confidence)
-                    page_html = (u"<b>The text on this page is estimated to be only %0.02f%% accurate</b>" % page_confidence) + page_html
+                    self.low_confidence_pages.append((page_idx, page_confidence))
 
             # Add all the images from the page
             images_on_page = 0
@@ -1122,6 +1197,14 @@ class EpubGenerator(object):
         # TODO
         #for page_epub in pages_epub:
         #    print(page_epub.get_body_content())
+
+        # Low-confidence pages are reported in the notice instead of
+        # interrupting the reading flow on every affected page.
+        confidence_notice = self._confidence_notice(pages_with_words)
+        if confidence_notice:
+            front_matter_epub.set_content(
+                front_matter_text.replace(
+                    '</p></div>', confidence_notice + '</div>', 1))
 
         # Add all the pages to the book
         for page_epub in pages_epub:
