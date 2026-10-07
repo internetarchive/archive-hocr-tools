@@ -23,7 +23,7 @@
 
 ## Status
 
-### Current status (as of Round 2)
+### Current status (as of Round 3)
 
 | Item | Status | Notes |
 |------|--------|-------|
@@ -35,16 +35,15 @@
 | WCAG | ✅ done | false conformance claim removed (`ae92103`); full checker still a TODO |
 | NOIMG | ✅ done | `--images` allowlist (`8a78e5c`); cover now decoupled from it (`4fb6977`) |
 | PROSE | ✅ done | `hocr-fix-paragraphs` (`1dab0e6`) |
-| STRUCT | ✅ done | headings + `<hr>` (`dfd819e`); running-head furniture pass + `THE BOOK OF X` vocabulary (`this round`) |
+| STRUCT | ✅ done | headings + `<hr>` (`dfd819e`); running-head furniture pass + `THE BOOK OF X` vocabulary (Round 3) |
+| CONFWARN | ✅ done | low-confidence pages reported in the notice (short page list or book-wide sentence), not mid-reading |
 | FILEDATE | 🟡 partial | build date emitted in the front-matter notice text; filename left to the caller by decision |
 | READORDER | ⬜ open | multi-column reading order |
 | IMGPOS | ⬜ open | image position vs caption |
 | HYPHEN | ⬜ open | soft-hyphen join correctness |
 | BLANKS | ⬜ open | empty-crop detection |
-| CONFWARN | ✅ done | low-confidence pages reported in the notice (short page list or book-wide sentence), not mid-reading |
 | REPASS | ⬜ open | model re-OCR pass |
 | REDO | ⬜ open | one-click rebuild + patron report |
-| FILEDATE | ⬜ open | build date in filename |
 
 ### New tasks (from Round 2 — P&P + Book of Love feedback)
 
@@ -61,23 +60,36 @@
 
 ### Reproduction runbook
 
-Iterate against the Huckleberry Finn test item in `epub-improvement-files/` using the `venv3.14` virtualenv. Full run takes ~30s.
+Iterate against the three fixtures in `epub-improvement-files/` (Huckleberry
+Finn, Pride and Prejudice, The Book of Love) using the `venv3.14` virtualenv.
+A full P&P or Book of Love run takes ~30–60s; Huck (with the image stack)
+takes ~2min.
 
 ```bash
 cd /home/merlijn/archive/archive-hocr-tools
 PYTHONPATH="$PWD" ./venv3.14/bin/python bin/hocr-to-epub \
   -f epub-improvement-files/adventuresofhuck0000mark_f2t7_hocr.html \
+  -m epub-improvement-files/adventuresofhuck0000mark_f2t7_meta.xml \
   -s epub-improvement-files/adventuresofhuck0000mark_f2t7_scandata.xml \
   -i epub-improvement-files/adventuresofhuck0000mark_f2t7_jp2.zip \
+  --images photos --images cover \
   -o /tmp/epubout/out.epub \
   -w /tmp/epubwork > /tmp/epubout/run.log 2>&1
 ```
 
 Notes:
-- No `_meta.xml` in the fixture, so metadata/dc:language arrive empty (relevant to LANG/ALT).
-- No `derivermodule` in this checkout, so the `_meta.xml`/`_scandata.xml` helpers fall through the try/except; scandata is still parsed for skip/cover pages (PAGENAV source).
+- All three fixtures carry `_meta.xml` now; `-m` is optional (the tool
+  derives the path from the hOCR filename). Drop `-m` (or point it at a
+  nonexistent file) to exercise the no-language/no-metadata paths.
+- `derivermodule` (internetarchive-deriver-module) is installed in
+  `venv3.14`, so `_meta.xml`/`_scandata.xml` are parsed for real (skip
+  pages, cover pages, page numbers).
 - Pillow opens the `.jp2` (no kakadu needed); `use_kakadu` is off by default.
+- P&P and Book of Love have no image stacks; they run text-only.
 - Inspect the unpacked result with `cd /tmp/epubout && mkdir -p ex && cd ex && unzip -q ../out.epub`.
+- Watch the log for `Running-head furniture: dropping N lines on M pages`
+  (furniture pass) and the per-page low-confidence warnings (the notice
+  summary is derived from them).
 
 ### Baseline (first successful run, 2026-10-05)
 
@@ -207,7 +219,7 @@ Tests unchanged (7 pre-existing `FileNotFoundError` failures, 43 pass) plus
 81 new tests (`tests/test_structure.py`, `tests/test_hocr_to_epub_furniture.py`).
 
 
-## Round 3 — running-head furniture pass + package xml:lang + notice date
+## Round 3 — running-head furniture pass + package xml:lang + notice date + CONFWARN
 - [x] STRUCT/TOC — **Running-head furniture pass** in `bin/hocr-to-epub`
   (`_collect_running_heads` / `_decide_furniture`, plus
   `hocr/structure.py` helpers). Running heads repeat at the top of many
