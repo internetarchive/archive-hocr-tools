@@ -41,7 +41,7 @@
 | IMGPOS | ⬜ open | image position vs caption |
 | HYPHEN | ⬜ open | soft-hyphen join correctness |
 | BLANKS | ⬜ open | empty-crop detection |
-| CONFWARN | ⬜ open | low-confidence warning UX |
+| CONFWARN | ✅ done | low-confidence pages reported in the notice (short page list or book-wide sentence), not mid-reading |
 | REPASS | ⬜ open | model re-OCR pass |
 | REDO | ⬜ open | one-click rebuild + patron report |
 | FILEDATE | ⬜ open | build date in filename |
