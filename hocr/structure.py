@@ -47,6 +47,7 @@ MAX_HEADING_LEN = 80
 # Front-matter running heads / titles -> EPUB type landmarks.
 FRONT_HEADS = (
     ("list of illustrations", "loi"),
+    ("illustrations", "loi"),
     ("list of plates", "loi"),
     ("table of contents", "toc"),
     ("contents", "toc"),

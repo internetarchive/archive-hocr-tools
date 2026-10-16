@@ -436,6 +436,11 @@ class EpubGenerator(object):
         }
         """""
 
+    # Sentence terminators that end a paragraph; anything else and a
+    # lowercase opening on the next paragraph means the two are one
+    # sentence split by a page turn or an OCR paragraph break.
+    SENTENCE_ENDINGS = '.!?\u201d\u2019\u2026:;)'
+
     strip_whitespaces = True
 
     def __init__(self,
@@ -1125,6 +1130,189 @@ class EpubGenerator(object):
                               occurrence['orig_norm']))
         return drop
 
+    def _continues_sentence(self, first_text, second_text):
+        """True if two paragraph texts form one sentence split by a page
+        turn or an OCR paragraph break.
+
+        A paragraph continues the sentence when it ends without a
+        sentence terminator and the next starts lowercase. A hyphenated
+        word split across the break (marked by the DEL placeholder) is a
+        continuation too, but only when the continuation itself starts
+        lowercase: the other half of the word does.
+        """
+        first = (first_text or '').rstrip()
+        second = (second_text or '').lstrip()
+        if not first or not second:
+            return False
+        if first.endswith('\x7f'):
+            return bool(second[:1].islower())
+        if first[-1] in self.SENTENCE_ENDINGS:
+            return False
+        if not second[:1].islower():
+            return False
+        return True
+
+    def _join_paragraphs(self, items):
+        """Merge paragraph items that form one sentence split by a page
+        turn or an OCR paragraph break.
+
+        The pagebreak markers that sat between the two halves move to the
+        join point inside the merged paragraph, so the page-list still
+        points at the right place. A heading or horizontal rule between
+        the two halves interrupts the sentence and stops the joining.
+        """
+        out = []
+        i = 0
+        n = len(items)
+        while i < n:
+            item = items[i]
+            if item['kind'] != 'para':
+                out.append(item)
+                i += 1
+                continue
+            text = item['text']
+            j = i + 1
+            pending = []
+            while j < n:
+                nxt = items[j]
+                if nxt['kind'] == 'marker':
+                    pending.append(nxt)
+                    j += 1
+                    continue
+                if nxt['kind'] != 'para':
+                    break       # a heading or hr interrupts the sentence
+                if not self._continues_sentence(text, nxt['text']):
+                    break
+                join = ''.join(marker['html'] for marker in pending)
+                pending = []
+                if text.endswith('\x7f'):
+                    text = text[:-1].rstrip() + join + \
+                        nxt['text'].lstrip()
+                else:
+                    text = text.rstrip() + ' ' + join + nxt['text']
+                j += 1
+            # Flush markers that could not be merged (the next item was
+            # not a continuing paragraph) back into the output order.
+            out.extend(pending)
+            if text.endswith('\x7f'):
+                # A trailing placeholder marks a hyphenated word split
+                # across the break; without a lowercase continuation the
+                # word is complete, so the placeholder goes away.
+                text = text[:-1].rstrip()
+            out.append({'kind': 'para', 'page': item['page'],
+                        'top_y': item['top_y'], 'text': text})
+            i = j
+        return out
+
+    def _render_items(self, items):
+        """Render a flat list of content items into page HTML."""
+        parts = []
+        for item in items:
+            kind = item['kind']
+            if kind == 'heading':
+                level = item['level']
+                parts.append(u"<h%d>%s</h%d>" % (level, item['text'], level))
+            elif kind == 'para':
+                parts.append(u"<p>%s</p>" % item['text'])
+            elif kind == 'hr':
+                parts.append('<hr/>')
+            elif kind == 'image':
+                parts.append(u"<img src=\"%s\" alt=\"\"/>" % item['src'])
+            elif kind == 'marker':
+                parts.append(item['html'])
+        return ''.join(parts)
+
+    def _section_kind(self, title):
+        """Which section a level-1 heading starts: a chapter, a front-matter
+        section, or None (a display line that belongs to the current
+        section).
+        """
+        if hocr.structure.is_chapter(title):
+            return 'chapter'
+        if hocr.structure.front_matter_type(title):
+            return 'front'
+        # All-caps body sections with a leading article ("THE BOOK OF
+        # DANIEL") are chapter starts too. A single-word junk heading
+        # (the half-title's "BOOK") is not.
+        if hocr.structure.is_caps_heading(title) and \
+                hocr.structure.CHAPTER_THE_RE.match(title):
+            return 'chapter'
+        return None
+
+    def _group_sections(self, page_data):
+        """Group the pages' content items into sections, one XHTML file
+        each.
+
+        A level-1 chapter heading starts a chapter; a level-1 front-matter
+        heading (preface, contents, list of illustrations...) starts a
+        front-matter section; content before the first heading forms the
+        preamble. Sections can start mid-page, since a chapter opening
+        may follow the previous chapter's text on the same page. This is
+        what lets paragraphs continue across page turns without being
+        split by the file boundary.
+        """
+        sections = []
+        current = None
+
+        def new_section(kind, title):
+            return {'kind': kind, 'title': title, 'items': [],
+                    'file': None, 'headings': []}
+
+        for data in page_data:
+            # A page that lists several chapters is the printed contents
+            # page: its chapter headings belong to the contents section,
+            # not to chapter starts. (Title matching is unreliable here
+            # because the OCR of the contents page adds noise like
+            # "CHAPTER IX PAGE".)
+            is_contents_page = sum(
+                1 for t in data['headings']
+                if hocr.structure.is_chapter(t)) > 1
+            for item in data['items']:
+                if item['kind'] == 'heading' and item['level'] == 1:
+                    title = self._clean_heading_title(
+                        html.unescape(item['text']))
+                    kind = self._section_kind(title)
+                    if kind == 'chapter' and is_contents_page:
+                        # A contents page's chapter lines belong to the
+                        # contents section: they stay in the section's
+                        # content as headings but do not start chapter
+                        # sections. A front-matter heading on the same
+                        # page (CONTENTS) still starts its section.
+                        if current is None:
+                            current = new_section('preamble', None)
+                        current['items'].append(item)
+                        current['headings'].append(title)
+                        continue
+                    if kind:
+                        if current:
+                            sections.append(current)
+                        current = new_section(kind, title)
+                        current['items'].append(item)
+                        current['headings'].append(title)
+                        continue
+                if current is None:
+                    current = new_section('preamble', None)
+                current['items'].append(item)
+                if item['kind'] == 'heading' and item['level'] == 1:
+                    current['headings'].append(
+                        self._clean_heading_title(
+                            html.unescape(item['text'])))
+        if current:
+            sections.append(current)
+        # Assign file names: a running counter per kind so a preamble, a
+        # front-matter section and chapters never collide.
+        counters = {'preamble': 0, 'front': 0, 'chapter': 0}
+        for section in sections:
+            kind = section['kind']
+            counters[kind] += 1
+            if kind == 'preamble':
+                section['file'] = 'preamble.html'
+            elif kind == 'front':
+                section['file'] = 'front_%d.html' % counters[kind]
+            else:
+                section['file'] = 'chapter_%d.html' % counters[kind]
+        return sections
+
     def generate(self, warn_confidence_threshold=75.0, remove_confidence_threshold=None):
         self.book = epub.EpubBook()
         self.book.reset()
@@ -1182,10 +1370,11 @@ class EpubGenerator(object):
                      len({page for page, _norm in self.furniture_drop})))
 
         pages_hocr = hocr.parse.hocr_page_iterator(self.hocr_xml_file_path)
-        pages_epub = []
-        pages_epub.append(front_matter_epub)
 
-        # Iterate all the pages
+        # Iterate all the pages, collecting the ordered content items for
+        # each one. One XHTML file is emitted per section (front matter
+        # and chapters), so paragraphs can continue across page turns
+        # without being split by the file boundary.
         images_found = 0
         words_found = 0
         # Pages whose mean word confidence is below the OCR-system warning
@@ -1197,8 +1386,7 @@ class EpubGenerator(object):
         # read only the NCX).
         self.pagebreaks = []
         pages_with_words = 0
-        # Level-1 headings collected per page as (page_file, [titles]).
-        self.page_h1 = []
+        page_data = []
         for page_idx, page in enumerate(pages_hocr):
             if page_idx in self.skip_pages:
                 continue
@@ -1215,7 +1403,7 @@ class EpubGenerator(object):
 
             # Collect blocks as (top_y, html) so horizontal separators can be
             # interleaved with the text in reading order.
-            page_blocks = []
+            page_items = []
             # Level-1 heading titles on this page, for the table of contents.
             page_headings = []
             page_confidence = 0
@@ -1267,13 +1455,15 @@ class EpubGenerator(object):
                 kind = hocr.structure.classify(page_text, fontsize, body_size)
                 if kind[0] == 'heading':
                     level = kind[1]
-                    page_blocks.append(
-                        (top_y, u"<h%d>%s</h%d>" % (level, page_text, level)))
+                    page_items.append(
+                        {'kind': 'heading', 'level': level, 'page': page_idx,
+                         'top_y': top_y, 'text': page_text})
                     if level == 1:
                         page_headings.append(
                             self._clean_heading_title(html.unescape(page_text)))
                 else:
-                    page_blocks.append((top_y, u"<p>%s</p>" % page_text))
+                    page_items.append({'kind': 'para', 'page': page_idx,
+                                       'top_y': top_y, 'text': page_text})
 
             # Horizontal separators become thematic breaks. Skip the running-head
             # underline near the top of the page and any thick non-rule blocks.
@@ -1289,15 +1479,22 @@ class EpubGenerator(object):
                 # Insert each separator before the first block below it so the
                 # paragraph reading order is preserved.
                 for y0 in sorted(seps):
-                    idx = len(page_blocks)
-                    for i, (ty, _h) in enumerate(page_blocks):
-                        if ty > y0:
+                    idx = len(page_items)
+                    for i, item in enumerate(page_items):
+                        if item['top_y'] > y0:
                             idx = i
                             break
-                    page_blocks.insert(idx, (y0, '<hr/>'))
+                    page_items.insert(idx, {'kind': 'hr', 'page': page_idx,
+                                            'top_y': y0})
 
-            # Combine the blocks into the page content.
-            page_html = ''.join(h for _y, h in page_blocks)
+            # The pagebreak marker opens the page's content so the page-list
+            # can point at it; when the joining pass merges this page's first
+            # paragraph with the previous page's last one, the marker moves
+            # to the join point inside the merged paragraph.
+            marker = self._pagebreak_marker(page_idx)
+            if marker:
+                page_items.insert(0, {'kind': 'marker', 'page': page_idx,
+                                      'top_y': 0, 'html': marker})
 
             # Add a warning if the confidence in the text is below the given threshold
             if words_on_page:
@@ -1331,37 +1528,49 @@ class EpubGenerator(object):
                     image_epub.set_content(cropped_jpeg_data)
 
                     self.book.add_item(image_epub)
-                    page_html += "<img src=\"%s\" alt=\"\"/>" % (image_filename_epub)
+                    page_items.append({'kind': 'image', 'page': page_idx,
+                                       'top_y': 0,
+                                       'src': image_filename_epub})
                     images_found += 1
                     images_on_page += 1
 
-            if words_on_page or images_on_page:
-                page_epub = PageHtml(title='Page %s' % page_idx,
-                                     file_name='page_%s.html' % page_idx,
-                                     media_type='application/xhtml+xml',
-                                     )
-                if self.language:
-                    page_epub.set_language(self.language)
-                else:
-                    page_epub.omit_lang = True
-                page_epub.add_link(
-                    href='style/style.css', rel='stylesheet', type='text/css'
-                )
-                marker = self._pagebreak_marker(page_idx)
-                if marker:
-                    page_html = marker + page_html
-                    self.pagebreaks.append(
-                        (page_epub.file_name, page_idx,
-                         self.page_numbers.get(page_idx, '')))
-                page_epub.set_content(page_html)
-                pages_epub.append(page_epub)
-                if page_headings:
-                    self.page_h1.append((page_epub.file_name, page_headings))
+            page_data.append({'page': page_idx, 'items': page_items,
+                              'headings': page_headings,
+                              'has_words': words_on_page > 0,
+                              'has_images': images_on_page > 0})
 
-        # Apply some transformations to remove headings and page numbers
-        # TODO
-        #for page_epub in pages_epub:
-        #    print(page_epub.get_body_content())
+        # Group the pages into sections, one XHTML file each, so
+        # paragraphs can continue across page turns.
+        sections = self._group_sections(page_data)
+
+        # Emit one file per section with the joining pass, which merges
+        # paragraphs that form one sentence across a page turn or an OCR
+        # paragraph break.
+        pages_epub = [front_matter_epub]
+        for section in sections:
+            joined = self._join_paragraphs(section['items'])
+            section_html = self._render_items(joined)
+            if not section_html:
+                continue
+            section_epub = epub.EpubHtml(
+                title=section['title'] or 'Section',
+                file_name=section['file'],
+                media_type='application/xhtml+xml',
+            )
+            if self.language:
+                section_epub.set_language(self.language)
+            else:
+                section_epub.omit_lang = True
+            section_epub.add_link(
+                href='style/style.css', rel='stylesheet', type='text/css'
+            )
+            section_epub.set_content(section_html)
+            pages_epub.append(section_epub)
+            for item in section['items']:
+                if item['kind'] == 'marker':
+                    self.pagebreaks.append(
+                        (section['file'], item['page'],
+                         self.page_numbers.get(item['page'], '')))
 
         # Low-confidence pages are reported in the notice instead of
         # interrupting the reading flow on every affected page.
@@ -1371,27 +1580,32 @@ class EpubGenerator(object):
                 front_matter_text.replace(
                     '</p></div>', confidence_notice + '</div>', 1))
 
-        # Add all the pages to the book
+        # Add all the sections to the book
         for page_epub in pages_epub:
             self.book.add_item(page_epub)
 
-        # Build the table of contents from the level-1 headings. A page that
-        # lists several chapters is the printed contents page, not a chapter
-        # start, so skip those pages; real chapters each open a page with a
-        # single heading. (Title matching is unreliable here because the OCR of
-        # the contents page adds noise like "CHAPTER IX PAGE".)
+        # Build the table of contents from the level-1 headings. A section
+        # that lists several chapters is the printed contents section, not
+        # a chapter start, so skip it; real chapters each open a page with
+        # a single heading. (Title matching is unreliable here because the
+        # OCR of the contents section adds noise like "CHAPTER IX PAGE".)
         toc = []
         contents_href = None
-        for href, titles in self.page_h1:
+        for section in sections:
+            titles = section['headings']
+            toc_heading = next((t for t in titles
+                                if hocr.structure.front_matter_type(t) == 'toc'),
+                               None)
+            if toc_heading and contents_href is None:
+                contents_href = section['file']
             if sum(1 for t in titles if hocr.structure.is_chapter(t)) > 1:
-                if contents_href is None:
-                    contents_href = next(
-                        (href for t in titles
-                         if hocr.structure.front_matter_type(t) == 'toc'),
-                        None)
+                # A section that lists several chapters is the printed
+                # contents section, not a chapter start: skip it from the
+                # ToC (the 'CONTENTS' heading already carries the 'toc'
+                # landmark above).
                 continue
-            toc.extend((href, t) for t in titles
-                      if hocr.structure.is_toc_entry(t))
+            toc.extend((section['file'], t) for t in titles
+                       if hocr.structure.is_toc_entry(t))
         self.toc_entries = toc
 
         self.has_text = words_found > 0
