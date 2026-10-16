@@ -20,6 +20,11 @@ import hocr.util
 import hocr.structure
 
 try:
+    from lxml import etree
+except ImportError:
+    etree = None
+
+try:
     from derivermodule.metadata import parse_item_metadata
     from derivermodule.scandata import (scandata_get_pagetype_pages,
                                         scandata_get_skip_pages,
@@ -206,22 +211,95 @@ class ImageStack(object):
 
 
 class LangEpubWriter(epub.EpubWriter):
-    """EpubWriter that puts ``xml:lang`` on the ``<package>`` element.
+    """EpubWriter that puts ``xml:lang`` on the ``<package>`` element and
+    adds a pageList to the NCX (pageTargets) that ebooklib does not build.
 
     ebooklib hardcodes the package attributes, but validators (Ace's
     ``epub-lang``) want the language on the package element itself, not
-    only as a dc:language entry.
+    only as a dc:language entry. Older reading systems read only the
+    NCX, so the pageTargets carry the same page breaks as nav.xhtml.
     """
 
     def __init__(self, name, book, options=None, language=None):
         super().__init__(name, book, options)
         self.xml_lang = language
+        self.pagebreaks = getattr(book, 'pagebreaks', None) or []
 
     def _write_opf_file(self, root):
         if self.xml_lang:
             root.set('{http://www.w3.org/XML/1998/namespace}lang',
                      self.xml_lang)
         return super()._write_opf_file(root)
+
+    def _get_nav(self, item):
+        tree_str = super()._get_nav(item)
+        if etree is not None:
+            # Some readers (e.g. Kobo) ignore hidden="hidden" on <nav> and
+            # show the nav even when it is not in the spine, so the
+            # landmarks nav needs both the hidden attribute and a style
+            # rule. The page-list nav already carries hidden; give it the
+            # same style so it stays out of the reading flow there too.
+            try:
+                tree = etree.fromstring(tree_str)
+                for nav in tree.iter():
+                    nav_type = nav.attrib.get(
+                        '{http://www.idpf.org/2007/ops}type')
+                    if nav_type in ('landmarks', 'page-list'):
+                        nav.set('hidden', 'hidden')
+                        nav.set('style', 'display:none')
+                tree_str = etree.tostring(
+                    tree, xml_declaration=True, encoding='utf-8',
+                    pretty_print=True)
+            except etree.Error:
+                pass
+        return tree_str
+
+    def _get_ncx(self):
+        tree_str = super()._get_ncx()
+        if etree is None or not self.pagebreaks:
+            return tree_str
+        try:
+            tree = etree.fromstring(tree_str)
+        except etree.Error:
+            return tree_str
+        root = tree
+
+        # pageList after the navMap: the same page breaks as nav.xhtml,
+        # for reading systems that read only the NCX.
+        nav_map = root.find(
+            '{http://www.daisy.org/z3986/2005/ncx/}navMap')
+        page_list = etree.SubElement(root, 'pageList')
+        play_order = 1
+        numbers = []
+        for fname, leaf, num in self.pagebreaks:
+            kind = 'normal' if num.isdigit() else 'front'
+            attrib = {'id': 'pt%d' % leaf, 'playOrder': str(play_order),
+                      'type': kind}
+            if kind == 'normal':
+                numbers.append(int(num))
+                attrib['value'] = str(num)
+            play_order += 1
+            page_target = etree.SubElement(page_list, 'pageTarget', attrib)
+            nav_label = etree.SubElement(page_target, 'navLabel')
+            text = etree.SubElement(nav_label, 'text')
+            text.text = num
+            etree.SubElement(page_target, 'content', {
+                'src': '%s#pg%d' % (fname, leaf)})
+
+        # dtb:totalPageCount / dtb:maxPageNumber from the arabic-numbered
+        # pages; ebooklib hardcodes both to 0.
+        head = root.find(
+            '{http://www.daisy.org/z3986/2005/ncx/}head')
+        for meta in head.findall(
+                '{http://www.daisy.org/z3986/2005/ncx/}meta'):
+            name = meta.get('name')
+            if name == 'dtb:totalPageCount':
+                meta.set('content', str(len(numbers)))
+            elif name == 'dtb:maxPageNumber':
+                meta.set('content', str(max(numbers) if numbers else 0))
+
+        return etree.tostring(tree, xml_declaration=True,
+                              encoding='utf-8', pretty_print=True)
 
 
 def write_epub_file(path, book, language=None):
@@ -329,10 +407,34 @@ class EpubGenerator(object):
             break-inside: avoid;
             oeb-column-number: 1;
         }
+        /* Paragraphs are indented and not separated by a blank line, which
+           is how a book is set and how a reader's other books look.
+           Leaving <p> unstyled is not neutral: the reading system falls
+           back to its own default of margin:1em and no indent, so the
+           book arrives looking like a web page. Follows Standard Ebooks'
+           core.css.
+
+           No accessibility standard requires either convention -- WCAG
+           1.4.12 asks only that the text survive a reader overriding the
+           spacing, which this does, since the override adds margin we
+           have not spent. */
         p {
-            text-indent: 4em;
+            margin: 0;
+            text-indent: 1em;
         }
-        """
+        /* The opening paragraph of anything is not indented: there is
+           nothing above it to be distinguished from. */
+        h1 + p, h2 + p, hr + p {
+            text-indent: 0;
+        }
+        /* The printed page number, shown where that page began. Colour
+           is inherited rather than set, so it follows the reader's own
+           theme and keeps whatever contrast they have chosen. */
+        .pagenum {
+            font-size: 0.75em;
+            vertical-align: super;
+        }
+        """""
 
     strip_whitespaces = True
 
@@ -400,17 +502,30 @@ class EpubGenerator(object):
 
             # Map leaf -> printed page number from the scandata page entries,
             # skipping leaves excluded from access formats. Used as-is (no
-            # interpolation). NOTE: the page entries carry ~40 duplicated
-            # numbers in irregular regions (e.g. page 11 on leaves 33 and 35);
-            # if unique page-list targets are wanted later, reconcile against
-            # the pageNumData assertions (the confirmed anchors) and keep those.
+            # interpolation), then deduplicated against the pageNumData
+            # assertions below.
             self.page_numbers = {}
+            self.asserted_leaf_numbers = {}
             for p in sd_pages:
                 if str(p.get('addToAccessFormats', 'true')).lower() == 'false':
                     continue
                 num = str(p.get('pageNumber') or '').strip()
                 if num:
                     self.page_numbers[int(p['@leafNum'])] = num
+            # pageNumData assertions: the page-number tool's confirmed
+            # anchors. They win over the interpolated page entries.
+            asrt = self.scandata.get('book', {}).get('pageNumData', {})
+            if isinstance(asrt, dict):
+                for assertion in asrt.get('assertion') or []:
+                    if not isinstance(assertion, dict):
+                        continue
+                    leaf = assertion.get('leafNum')
+                    num = (assertion.get('pageNum') or '').strip()
+                    if leaf is None or not num:
+                        continue
+                    self.asserted_leaf_numbers[int(leaf)] = num
+            self.page_numbers = self._reconcile_duplicate_page_numbers(
+                self.page_numbers)
         else:
             self.skip_pages = []
             self.cover_pages = []
@@ -418,6 +533,30 @@ class EpubGenerator(object):
 
         print("Parsing file %s" % self.hocr_xml_file_path)
         self.generate()
+
+    def _reconcile_duplicate_page_numbers(self, page_numbers):
+        """Resolve duplicated printed numbers to a single leaf.
+
+        The page-number tool interpolates across unnumbered plates, so a
+        number can land on two leaves and collide with the next anchor.
+        A reader that follows the page-list would jump to an unnumbered
+        plate. Prefer the leaf the page-number tool asserted (the
+        confirmed anchor); otherwise the earliest leaf carrying the
+        number, which is where the folio was printed.
+        """
+        by_number = {}
+        for leaf, num in page_numbers.items():
+            by_number.setdefault(num, []).append(leaf)
+        for num, leaves in by_number.items():
+            if len(leaves) < 2:
+                continue
+            asserted = [leaf for leaf in leaves
+                        if self.asserted_leaf_numbers.get(leaf) == num]
+            keep = asserted[0] if asserted else max(leaves)
+            for leaf in leaves:
+                if leaf != keep:
+                    page_numbers.pop(leaf, None)
+        return page_numbers
 
     def _ocr_detected_language_confident(self, threshold=0.9):
         """True if a confident OCR-detected language is available in the metadata."""
@@ -680,20 +819,24 @@ class EpubGenerator(object):
     def _pagebreak_marker(self, leaf):
         """EPUB pagebreak marker for this leaf's printed page number, or None.
 
-        The marker is what ebooklib's page-list scans for. It is an empty span
-        carrying the number in aria-label (not as visible text) plus
-        role="doc-pagebreak" so the epub:type has a matching ARIA role: this
-        avoids the contrast failure and the page number being spoken twice at
-        every boundary. There is one marker per page file, so the leaf number
-        is a safe unique anchor.
+        The marker is what ebooklib's page-list scans for. The number is
+        a text node in the document (DAISY's Pipeline reads text, not
+        aria-label), with ``aria-label`` kept for screen readers whose
+        doc-pagebreak implementation hides the text from assistive tech
+        (DAISY's own guidance: aria-label is "currently required even
+        when the number is visible"). The class says which sequence the
+        number belongs to: ``page-normal`` for arabic body folios,
+        ``page-front`` for roman front-matter folios. There is one
+        marker per page file, so the leaf number is a safe unique anchor.
         """
         num = self.page_numbers.get(leaf)
         if not num:
             return None
+        cls = 'page-normal' if num.isdigit() else 'page-front'
         return ('<span xmlns:epub="http://www.idpf.org/2007/ops" '
-                'epub:type="pagebreak" role="doc-pagebreak" aria-label="%s" '
-                'id="pg%d"></span>'
-                % (html.escape(num), leaf))
+                'epub:type="pagebreak" role="doc-pagebreak" '
+                'aria-label="%s" class="pagenum %s" id="pg%d">%s</span>'
+                % (html.escape(num), cls, leaf, html.escape(num)))
 
     def _add_page_break_source(self):
         """Emit pageBreakSource identifying the scanned edition.
@@ -826,8 +969,6 @@ class EpubGenerator(object):
         folio = self.page_numbers.get(page_idx, '')
         _numeral, rest = hocr.structure.split_folio_token(raw, folio)
         norm = hocr.structure.normalize_head_text(rest)
-        if len(norm) < 3:
-            return False
         return (page_idx, norm) in self.furniture_drop
 
     def _collect_running_heads(self, body_size):
@@ -883,7 +1024,10 @@ class EpubGenerator(object):
                     _numeral, rest = hocr.structure.split_folio_token(
                         raw, folio)
                     norm = hocr.structure.normalize_head_text(rest)
-                    if len(norm) < 3:
+                    if not norm and _numeral is None:
+                        # Nothing left after stripping: an ornament line
+                        # ("—", "***") that carries no words at all. Not
+                        # a head, and not worth a family.
                         continue
                     occurrences.append({'page': page_idx, 'raw': raw,
                                         'fontsize': fontsize, 'norm': norm})
@@ -900,18 +1044,33 @@ class EpubGenerator(object):
             occurrence.setdefault('orig_norm', occurrence['norm'])
             by_norm.setdefault(occurrence['norm'], []).append(occurrence)
 
+        drop = set()
+        # Folio-only lines (nothing left after stripping the printed
+        # number): the pagebreak marker carries that number, so the line
+        # is furniture. This runs before the family logic because a
+        # folio-only line recurs on every page and would otherwise form
+        # a family whose first occurrence survives as a heading.
+        folio_only = {o['page'] for norm, occs in by_norm.items()
+                      if not norm for o in occs}
+        for page in sorted(folio_only):
+            drop.add((page, ''))
+
         # A real running head recurs a lot; a pair of identical lines is
         # only trusted when the lines read like heads (mostly caps), so
         # recurring body text (dialogue, letters) is safe.
         families = set()
         for norm, occs in by_norm.items():
+            if not norm:
+                continue
             if len(occs) >= 3 or (
                     len(occs) >= FURNITURE_MIN_PAGES
                     and all(hocr.structure.is_mostly_caps(o['raw'])
                             for o in occs)):
                 families.add(norm)
         if not families:
-            return set()
+            # Only folio-only lines were collected: return them without
+            # running the family logic at all.
+            return drop
 
         # Mangled variants of a head ("THE BOOK OF LOVE of" for
         # "THE BOOK OF LOVE 107") join the family of the phrase they
@@ -1034,6 +1193,9 @@ class EpubGenerator(object):
         # pages skipped entirely for unreadability.
         self.low_confidence_pages = []
         self.skipped_low_confidence_pages = []
+        # Pagebreak markers, for the NCX pageList (older reading systems
+        # read only the NCX).
+        self.pagebreaks = []
         pages_with_words = 0
         # Level-1 headings collected per page as (page_file, [titles]).
         self.page_h1 = []
@@ -1188,6 +1350,9 @@ class EpubGenerator(object):
                 marker = self._pagebreak_marker(page_idx)
                 if marker:
                     page_html = marker + page_html
+                    self.pagebreaks.append(
+                        (page_epub.file_name, page_idx,
+                         self.page_numbers.get(page_idx, '')))
                 page_epub.set_content(page_html)
                 pages_epub.append(page_epub)
                 if page_headings:
@@ -1251,10 +1416,15 @@ class EpubGenerator(object):
             for i, (href, title) in enumerate(self.toc_entries)
         ]
 
-        # Landmarks: the key entry points a reader wants to jump to.
+        # Landmarks: the key entry points a reader wants to jump to. The
+        # cover entry points at the cover *page* (cover.xhtml), not the
+        # image: the landmark must link to a content document, and
+        # epubcheck flags an image reference here (OPF-032) and the
+        # unlinked non-linear page (OPF-096).
         guide = []
         if cover_set:
-            guide.append({'type': 'cover', 'title': 'Cover', 'href': 'cover.jpeg'})
+            guide.append({'type': 'cover', 'title': 'Cover',
+                          'href': 'cover.xhtml'})
         if contents_href:
             guide.append({'type': 'toc', 'title': 'Contents', 'href': contents_href})
         bodymatter_set = False
@@ -1269,14 +1439,17 @@ class EpubGenerator(object):
 
         self.book.add_item(epub.EpubNcx())
         self.book.add_item(epub.EpubNav())
-        # The nav document must not be first in the linear reading order: some
-        # readers (e.g. Kobo) ignore hidden="hidden" on <nav>, so a linear nav
-        # makes the book open on the page-list. Mark it non-linear, as the cover
-        # already is.
+        # Hand the pagebreak markers to the writer for the NCX pageList.
+        self.book.pagebreaks = self.pagebreaks
+        # The nav document must not appear in the reading order at all:
+        # some readers (e.g. Kobo) ignore hidden="hidden" on <nav> and
+        # show it even when it is not in the spine, so the spine carries
+        # no nav itemref. epubcheck also requires a non-linear document
+        # to be reachable, and the nav is not reachable by design.
         if cover_set:
-            self.book.spine = ['cover', ('nav', 'no')] + pages_epub
+            self.book.spine = ['cover'] + pages_epub
         else:
-            self.book.spine = [('nav', 'no')] + pages_epub
+            self.book.spine = pages_epub
         write_epub_file(self.epub_zip_file_path, self.book,
                         language=self.language)
 
