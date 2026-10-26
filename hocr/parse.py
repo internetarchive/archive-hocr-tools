@@ -183,7 +183,7 @@ def hocr_page_to_word_data(hocr_page, scaler=1):
                 conf = None
                 m = X_WCONF_REGEX.search(word.attrib['title'])
                 if m:
-                    conf = int(m.group(1).split()[0])
+                    conf = float(m.group(1).split()[0])
 
                 f_sizeraw = X_FSIZE_REGEX.search(word.attrib['title'])
                 if f_sizeraw:
@@ -273,7 +273,7 @@ def get_title_attrs(title):
 
     for subt in sub_title:
         if subt[0:7] == 'x_wconf':
-            conf = int(subt[8:])
+            conf = float(subt[8:])
             continue
         if subt[0:4] == 'bbox':
             # TODO: use int()?
