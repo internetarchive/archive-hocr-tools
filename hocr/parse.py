@@ -160,21 +160,11 @@ def hocr_page_to_word_data(hocr_page, scaler=1):
                     wordbased = False
 
                 if wordbased:
-                    wword = word
-                    # Words may contains additional nodes like <em>
-                    while True:
-                        children = list(wword)
-                        if len(children) == 0:
-                            break
+                    # Words may contain additional nodes like <em> or <sup>,
+                    # with text before and after them
+                    rawtext = ''.join(word.itertext())
 
-                        if len(children) > 1:
-                            raise ValueError('Not character based but word has multiple children?')
-
-                        wword = children[0]
-
-                    rawtext = wword.text
-
-                    if wword.text is None:
+                    if rawtext == '':
                         raise ValueError('Word with no text value?')
 
                 box = BBOX_REGEX.search(word.attrib['title']).group(1).split()
@@ -339,20 +329,11 @@ def hocr_page_to_word_data_fast(hocr_page):
                     has_ocrx_cinfo = 2
 
                 if wordbased:
-                    # Words may contains additional nodes like <em>
-                    while True:
-                        children = list(word)
-                        if len(children) == 0:
-                            break
+                    # Words may contain additional nodes like <em> or <sup>,
+                    # with text before and after them
+                    rawtext = ''.join(word.itertext())
 
-                        if len(children) > 1:
-                            raise ValueError('Not character based but word has multiple children?')
-
-                        word = children[0]
-
-                    rawtext = word.text
-
-                    if word.text is None:
+                    if rawtext == '':
                         raise ValueError('Word with no text value?')
 
                 word_data.append({'bbox': box, 'text': rawtext,
