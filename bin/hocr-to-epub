@@ -342,6 +342,13 @@ class EpubGenerator(object):
 
     __version__ = '1.0.0'
 
+    # Inputs to the accessibility summary, filled in while generating. Class
+    # attributes so the metadata can be built (and tested) on a generator
+    # that has not run yet.
+    has_text = False
+    has_images = False
+    print_illustrations = False
+
     front_matter = (
         '<div class="offset">'
         '<p dir="ltr">This book was produced in EPUB format by the '
@@ -717,6 +724,14 @@ class EpubGenerator(object):
             modes.append('visual')
             modes_sufficient.append('visual')
             summary += ' This publication is missing meaningful alternative text.'
+        elif self.print_illustrations:
+            # The scan recorded illustrations that this build left out (the
+            # caller did not ask for photos). Say so: a reader choosing this
+            # file over the print edition should know the plates are gone.
+            # Keyed on "the scan had pictures", not on "this build has no
+            # pictures", so a book that never had any stays silent.
+            summary += (' Illustrations from the print edition are not '
+                        'included.')
         if self.low_confidence_pages or self.skipped_low_confidence_pages:
             summary += (' Pages with poor OCR quality are listed in the '
                         'notice at the beginning of the book.')
@@ -772,35 +787,22 @@ class EpubGenerator(object):
                 OrderedDict([('property', 'schema:accessibilityFeature')])
             )
 
-        # these states will be true for any static content,  which we know
-        # is guaranteed for OCR generated texts.
-        hazards = [
-            'noFlashingHazard',
-            'noMotionSimulationHazard',
-            'noSoundHazard',
-        ]
-        controls = [
-            'fullKeyboardControl',
-            'fullMouseControl',
-            'fullSwitchControl',
-            'fullTouchControl',
-            'fullVoiceControl',
-        ]
-
-        for hazard in hazards:
-            self.book.add_metadata(
-                None,
-                'meta',
-                hazard,
-                OrderedDict([('property', 'schema:accessibilityHazard')])
-            )
-        for control in controls:
-            self.book.add_metadata(
-                None,
-                'meta',
-                control,
-                OrderedDict([('property', 'schema:accessibilityControl')])
-            )
+        # A static OCR text carries no flashing, motion or sound hazard, and
+        # the vocabulary's single recommended value for that is "none": it
+        # displays the same as the three no…Hazard values it replaces, and
+        # says the same thing in the form tools expect.
+        #
+        # accessibilityControl is deliberately not emitted. The W3C
+        # accessibility vocabulary marks the property inapplicable to
+        # resources that are not tightly integrated with their user
+        # interface, and what keyboard/touch/voice control a reader gets here
+        # is a property of the reading app, not of this file.
+        self.book.add_metadata(
+            None,
+            'meta',
+            'none',
+            OrderedDict([('property', 'schema:accessibilityHazard')])
+        )
 
 
     def _compute_body_size(self, sample_pages=200):
@@ -1396,6 +1398,10 @@ class EpubGenerator(object):
         # and chapters), so paragraphs can continue across page turns
         # without being split by the file boundary.
         images_found = 0
+        # Illustration boxes the OCR recorded, whether or not this build was
+        # asked to embed them (the accessibilitySummary says out loud when
+        # the print edition's plates were left out).
+        photos_seen = 0
         words_found = 0
         # Pages whose mean word confidence is below the OCR-system warning
         # threshold (reported in the notice, not in the reading flow), and
@@ -1532,6 +1538,7 @@ class EpubGenerator(object):
 
             # Add all the images from the page
             images_on_page = 0
+            photos_seen += len(photo_boxes)
             if 'photos' not in self.image_kinds:
                 photo_boxes = []
             for image_idx, box in enumerate(photo_boxes):
@@ -1630,6 +1637,7 @@ class EpubGenerator(object):
 
         self.has_text = words_found > 0
         self.has_images = images_found > 0
+        self.print_illustrations = bool(photos_seen and not images_found)
         self.set_accessibility_metadata()
 
         # Set cover. The cover is the book's identity, not a content photo, so
