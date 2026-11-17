@@ -200,6 +200,19 @@ def is_mostly_caps(text):
     return sum(1 for c in alpha if c.isupper()) >= 0.75 * len(alpha)
 
 
+def is_folio_only(text):
+    """True if the text is nothing but a printed page number.
+
+    A leftover folio ("53", "xvii", "37.") reads as a sentence with no
+    terminator, so a joining pass welds it onto the neighbouring sentence.
+    Only a single token counts: "Chapter 12" is not a folio.
+    """
+    token = (text or '').strip().strip('.,;:()\u2013\u2014-')
+    if not token or len(token.split()) != 1:
+        return False
+    return bool(DIGITS_TOKEN_RE.match(token)) or is_roman_numeral(token)
+
+
 def carries_folio(text, folio):
     """True if the line's first or last token is the page's printed folio.
 

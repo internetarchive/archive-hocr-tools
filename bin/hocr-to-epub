@@ -1139,10 +1139,20 @@ class EpubGenerator(object):
         word split across the break (marked by the DEL placeholder) is a
         continuation too, but only when the continuation itself starts
         lowercase: the other half of the word does.
+
+        Neither half may be page furniture. A leftover folio ("53", "xvii")
+        or a bare number reads as a tail without a terminator, and would be
+        merged into the sentence it happens to sit next to.
         """
         first = (first_text or '').rstrip()
         second = (second_text or '').lstrip()
         if not first or not second:
+            return False
+        if not any(c.isalpha() for c in first) or \
+                not any(c.isalpha() for c in second):
+            return False
+        if hocr.structure.is_folio_only(first) or \
+                hocr.structure.is_folio_only(second):
             return False
         if first.endswith('\x7f'):
             return bool(second[:1].islower())
@@ -1160,6 +1170,13 @@ class EpubGenerator(object):
         join point inside the merged paragraph, so the page-list still
         points at the right place. A heading or horizontal rule between
         the two halves interrupts the sentence and stops the joining.
+
+        When a join is refused, the markers that had been collected on the
+        way stay *after* the paragraph they followed, never before it: a
+        marker opening page N belongs at the first word of page N, so "go
+        to page N" must not land in the previous page's text. Unconsumed
+        markers are therefore handed back to the main loop instead of being
+        flushed here (see the ``i = j - len(pending)`` step).
         """
         out = []
         i = 0
@@ -1191,9 +1208,6 @@ class EpubGenerator(object):
                 else:
                     text = text.rstrip() + ' ' + join + nxt['text']
                 j += 1
-            # Flush markers that could not be merged (the next item was
-            # not a continuing paragraph) back into the output order.
-            out.extend(pending)
             if text.endswith('\x7f'):
                 # A trailing placeholder marks a hyphenated word split
                 # across the break; without a lowercase continuation the
@@ -1201,7 +1215,13 @@ class EpubGenerator(object):
                 text = text[:-1].rstrip()
             out.append({'kind': 'para', 'page': item['page'],
                         'top_y': item['top_y'], 'text': text})
-            i = j
+            # Markers still in `pending` were collected after the last
+            # merge (or after an outright refused join), so they were not
+            # consumed by this paragraph: they are the items immediately
+            # before j, and the next round has to emit them in order. Never
+            # flush them here, or they would land in front of this
+            # paragraph, which puts the break on the previous page.
+            i = j - len(pending)
         return out
 
     def _render_items(self, items):
