@@ -2,8 +2,8 @@ import pytest
 
 from hocr.structure import (body_size, carries_folio, classify,
                             front_matter_type, is_caps_heading,
-                            is_mostly_caps, is_roman_numeral,
-                            is_toc_entry, normalize_head_text,
+                            is_folio_only, is_mostly_caps, is_roman_numeral,
+                            is_toc_entry, label_case, normalize_head_text,
                             split_folio_token)
 
 
@@ -186,3 +186,68 @@ def test_split_folio_token(text, folio, numeral, rest):
 )
 def test_carries_folio(text, folio, expected):
     assert carries_folio(text, folio) is expected
+
+
+@pytest.mark.parametrize(
+    ('text', 'expected'),
+    [
+        ('53', True),
+        ('37.', True),                       # trailing punctuation
+        ('xvii', True),
+        ('xiv', True),
+        ('978', True),
+        # Not folios: a folio is a lone number, nothing else.
+        ('Chapter 12', False),
+        ('53 54', False),
+        ('THE BOOK OF LOVE', False),
+        ('viii ix', False),
+        ('', False),
+        ('.', False),
+    ],
+)
+def test_is_folio_only(text, expected):
+    assert is_folio_only(text) is expected
+
+
+@pytest.mark.parametrize(
+    ('text', 'expected'),
+    [
+        ('CHAPTER VII', 'Chapter VII'),
+        ('CHAPTER XII', 'Chapter XII'),
+        ('CONTENTS', 'Contents'),
+        ('THE BOOK OF DANIEL', 'The Book of Daniel'),
+        ('CHAPTER THE LAST', 'Chapter the Last'),
+        ('PART THE SECOND', 'Part the Second'),
+        ('LIST OF ILLUSTRATIONS', 'List of Illustrations'),
+        ('A TALE OF TWO CITIES', 'A Tale of Two Cities'),
+        ('NON-VERBAL TESTS', 'Non-Verbal Tests'),
+        ('BOOK 12', 'Book 12'),
+        ('THE ITALIAN IN ENGLAND', 'The Italian in England'),
+        # Already mixed case: the book's own capitalisation survives, so a
+        # proper noun is never lowercased.
+        ('Chapter VII', 'Chapter VII'),
+        ('Dedication', 'Dedication'),
+        ('Alice in Wonderland', 'Alice in Wonderland'),
+        # Nothing to retitle.
+        ('', ''),
+        ('   ', '   '),
+        ('12', '12'),
+    ],
+)
+def test_label_case(text, expected):
+    assert label_case(text) == expected
+
+
+def test_label_case_is_idempotent():
+    """Labels pass through several surfaces (file title, ToC, landmarks);
+    applying the helper twice must not change the result."""
+    for text in ('CHAPTER VII', 'THE BOOK OF DANIEL', 'CONTENTS',
+                 'A TALE OF TWO CITIES', 'NON-VERBAL TESTS', 'Dedication'):
+        once = label_case(text)
+        assert label_case(once) == once
+
+
+def test_label_case_keeps_roman_numerals_upper_case():
+    assert label_case('CHAPTER XXVIII') == 'Chapter XXVIII'
+    # A word that merely looks like a numeral is still title-cased.
+    assert label_case('THE CIVIL WAR') == 'The Civil War'

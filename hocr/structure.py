@@ -155,10 +155,71 @@ def is_toc_entry(text):
     return bool(CHAPTER_THE_RE.match(text) and is_caps_heading(text))
 
 
+# Words that stay lowercase inside a title-case label unless they open it.
+LABEL_SMALL_WORDS = frozenset((
+    'a', 'an', 'and', 'as', 'at', 'but', 'by', 'for', 'from', 'in', 'into',
+    'nor', 'of', 'on', 'or', 'the', 'to', 'with', 'yet'))
+
+
+def label_case(text):
+    """Title-case an all-caps heading for a reader-facing label.
+
+    File ``<title>``, table-of-contents entries and landmark labels are read
+    out loud and shown in reading-system interfaces, where the OCR's
+    "CHAPTER VII" is neither. Only a line that is *mostly* uppercase is retitled:
+    a heading the OCR already set in mixed case keeps its own capitalisation,
+    so proper nouns the book itself capitalised survive.
+
+    Roman numerals keep their caps ("Chapter VII", not "Chapter Vii"), tokens
+    without letters are left alone ("Room 12"), and a hyphenated compound
+    capitalises both halves ("Non-Verbal").
+    """
+    text = text or ''
+    stripped = text.strip()
+    if not stripped or not is_mostly_caps(stripped):
+        return text
+
+    words = []
+    for index, token in enumerate(stripped.split()):
+        core = ''.join(c for c in token if c.isalpha())
+        if not core:
+            words.append(token)                 # digits or punctuation
+        elif len(core) >= 2 and is_roman_numeral(core, max_len=15):
+            words.append(token)                 # VII, XXVIII, ...
+        elif index > 0 and core.lower() in LABEL_SMALL_WORDS:
+            words.append(token.lower())
+        else:
+            words.append(_capitalize_token(token))
+    return ' '.join(words)
+
+
+def _capitalize_token(token):
+    """Lower-case ``token``, then capitalise the first letter of each part.
+
+    The first *letter* is capitalised rather than the first character, so
+    attached punctuation is untouched ("(see" -> "(see", "(SEE" -> "(See").
+    A part after a hyphen or slash is capitalised too ("NON-VERBAL" ->
+    "Non-Verbal").
+    """
+    chars = []
+    capitalize = True
+    for char in token.lower():
+        if capitalize and char.isalpha():
+            chars.append(char.upper())
+            capitalize = False
+        else:
+            chars.append(char)
+        if char in '-/\u2010\u2011\u2012\u2013\u2014':
+            capitalize = True
+    return ''.join(chars)
+
+
 # Folio-like tokens that may be attached to a running head
 # ("PREFACE. xi", "29 PRIDE AND PREJUDICE.", "THE BOOK OF LOVE 107").
 DIGITS_TOKEN_RE = re.compile(r'^\d{1,4}$')
-ROMAN_TOKEN_RE = re.compile(r'^[ivxlcdm]{1,5}$', re.I)
+# Length is checked separately (see ``is_roman_numeral``), so one pattern
+# covers both a short folio and a long chapter numeral.
+ROMAN_TOKEN_RE = re.compile(r'^[ivxlcdm]{1,15}$', re.I)
 _ROMAN_VALUES = {'i': 1, 'v': 5, 'x': 10, 'l': 50,
                  'c': 100, 'd': 500, 'm': 1000}
 
@@ -166,14 +227,17 @@ _ROMAN_VALUES = {'i': 1, 'v': 5, 'x': 10, 'l': 50,
 _FOLIO_CONFUSIONS = str.maketrans({'O': '0', 'o': '0', 'l': '1', 'I': '1'})
 
 
-def is_roman_numeral(token):
+def is_roman_numeral(token, max_len=5):
     """True if ``token`` is a grammatically valid roman numeral.
 
     Rejects ordinary words that happen to consist of roman symbols
     ("vivid", "civil", "mild") by checking numeral grammar.
+
+    ``max_len`` is 5 because a printed folio is short; callers that mean
+    chapter numerals ("XXVIII") pass a larger bound.
     """
     low = token.lower()
-    if not ROMAN_TOKEN_RE.match(low):
+    if len(low) > max_len or not ROMAN_TOKEN_RE.match(low):
         return False
     values = [_ROMAN_VALUES[c] for c in low]
     for i, value in enumerate(values):

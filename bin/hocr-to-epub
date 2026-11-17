@@ -56,6 +56,9 @@ FURNITURE_MIN_PAGES = 2
 FURNITURE_RUN_GAP = 5
 FURNITURE_PREFIX_TOKENS = 2
 
+# Namespace of the XHTML elements ebooklib emits (nav document head/title).
+XHTML_NS = '{http://www.w3.org/1999/xhtml}'
+
 if os.path.exists('/var/tmp/fast'):
     WORKING_DIR = '/var/tmp/fast/'
 else:
@@ -231,6 +234,12 @@ class LangEpubWriter(epub.EpubWriter):
                      self.xml_lang)
         return super()._write_opf_file(root)
 
+    #: The navigation document is the contents list, not the book. ebooklib
+    #: fills both the nav ``<title>`` and the toc ``<h2>`` with the book
+    #: title; an accessibility review asks for the document to be titled for
+    #: what it is ("the HTML title should never be the name of the book").
+    NAV_TITLE = 'Table of Contents'
+
     def _get_nav(self, item):
         tree_str = super()._get_nav(item)
         if etree is not None:
@@ -241,12 +250,20 @@ class LangEpubWriter(epub.EpubWriter):
             # same style so it stays out of the reading flow there too.
             try:
                 tree = etree.fromstring(tree_str)
+                head = tree.find(XHTML_NS + 'head')
+                if head is not None:
+                    title = head.find(XHTML_NS + 'title')
+                    if title is not None:
+                        title.text = self.NAV_TITLE
                 for nav in tree.iter():
                     nav_type = nav.attrib.get(
                         '{http://www.idpf.org/2007/ops}type')
                     if nav_type in ('landmarks', 'page-list'):
                         nav.set('hidden', 'hidden')
                         nav.set('style', 'display:none')
+                    elif nav_type == 'toc':
+                        for heading in nav.iter(XHTML_NS + 'h2'):
+                            heading.text = self.NAV_TITLE
                 tree_str = etree.tostring(
                     tree, xml_declaration=True, encoding='utf-8',
                     pretty_print=True)
@@ -1579,8 +1596,12 @@ class EpubGenerator(object):
             section_html = self._render_items(joined)
             if not section_html:
                 continue
+            # The file title is shown and spoken next to the chapter text, so
+            # it is title-cased here exactly as the ToC and landmark labels
+            # below are: the three surfaces must not disagree.
             section_epub = epub.EpubHtml(
-                title=section['title'] or 'Section',
+                title=hocr.structure.label_case(
+                    section['title'] or 'Front matter'),
                 file_name=section['file'],
                 media_type='application/xhtml+xml',
             )
@@ -1654,7 +1675,7 @@ class EpubGenerator(object):
         # Table of contents from the level-1 headings (chapters and front-matter
         # titles), each linking to the page it starts on.
         self.book.toc = [
-            epub.Link(href, title, 'toc_%d' % i)
+            epub.Link(href, hocr.structure.label_case(title), 'toc_%d' % i)
             for i, (href, title) in enumerate(self.toc_entries)
         ]
 
@@ -1673,9 +1694,13 @@ class EpubGenerator(object):
         for href, title in self.toc_entries:
             fm = hocr.structure.front_matter_type(title)
             if fm and fm != 'toc':
-                guide.append({'type': fm, 'title': title, 'href': href})
+                guide.append({'type': fm,
+                              'title': hocr.structure.label_case(title),
+                              'href': href})
             elif not bodymatter_set and hocr.structure.is_chapter(title):
-                guide.append({'type': 'bodymatter', 'title': title, 'href': href})
+                guide.append({'type': 'bodymatter',
+                              'title': hocr.structure.label_case(title),
+                              'href': href})
                 bodymatter_set = True
         self.book.guide = guide
 
