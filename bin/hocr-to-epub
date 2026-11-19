@@ -443,6 +443,16 @@ class EpubGenerator(object):
             break-inside: avoid;
             oeb-column-number: 1;
         }
+        /* A figure brings its own margins from the reading system's stylesheet
+           (1em top and bottom, 40px either side in most of them), which would
+           indent a plate away from the text block it belongs to. Centering it
+           is what the printed page does with a full-page plate. */
+        figure {
+            margin: 0;
+            text-align: center;
+            break-inside: avoid;
+            page-break-inside: avoid;
+        }
         /* Paragraphs are indented and not separated by a blank line, which
            is how a book is set and how a reader's other books look.
            Leaving <p> unstyled is not neutral: the reading system falls
@@ -1274,8 +1284,11 @@ class EpubGenerator(object):
 
         The pagebreak markers that sat between the two halves move to the
         join point inside the merged paragraph, so the page-list still
-        points at the right place. A heading or horizontal rule between
-        the two halves interrupts the sentence and stops the joining.
+        points at the right place. An illustration between the two halves
+        does not interrupt the sentence -- it goes after the whole
+        paragraph, because it belongs to the page, not to the middle of a
+        clause. A heading or horizontal rule does interrupt the sentence
+        and stops the joining.
 
         When a join is refused, the markers that had been collected on the
         way stay *after* the paragraph they followed, never before it: a
@@ -1296,9 +1309,10 @@ class EpubGenerator(object):
             text = item['text']
             j = i + 1
             pending = []
+            plates = []
             while j < n:
                 nxt = items[j]
-                if nxt['kind'] == 'marker':
+                if nxt['kind'] in ('marker', 'image'):
                     pending.append(nxt)
                     j += 1
                     continue
@@ -1306,7 +1320,13 @@ class EpubGenerator(object):
                     break       # a heading or hr interrupts the sentence
                 if not self._continues_sentence(text, nxt['text']):
                     break
-                join = ''.join(marker['html'] for marker in pending)
+                join = ''.join(one['html'] for one in pending
+                               if one['kind'] == 'marker')
+                # The paragraph continues, so anything held back between the
+                # halves was inside it: the plate goes after the whole
+                # sentence, which is where a reader would put it.
+                plates.extend(one for one in pending
+                              if one['kind'] == 'image')
                 pending = []
                 if text.endswith('\x7f'):
                     text = text[:-1].rstrip() + join + \
@@ -1321,11 +1341,12 @@ class EpubGenerator(object):
                 text = text[:-1].rstrip()
             out.append({'kind': 'para', 'page': item['page'],
                         'top_y': item['top_y'], 'text': text})
-            # Markers still in `pending` were collected after the last
-            # merge (or after an outright refused join), so they were not
+            out.extend(plates)
+            # Markers and plates still in `pending` were collected after the
+            # last merge (or after an outright refused join), so they were not
             # consumed by this paragraph: they are the items immediately
             # before j, and the next round has to emit them in order. Never
-            # flush them here, or they would land in front of this
+            # flush them here, or a marker would land in front of this
             # paragraph, which puts the break on the previous page.
             i = j - len(pending)
         return out
@@ -1343,7 +1364,12 @@ class EpubGenerator(object):
             elif kind == 'hr':
                 parts.append('<hr/>')
             elif kind == 'image':
-                parts.append(u"<img src=\"%s\" alt=\"\"/>" % item['src'])
+                # No caption and no description to offer yet. Announced as a
+                # picture with an empty name it is noise in reading order; a
+                # figure is what the layout is, and presentation says "the text
+                # does not depend on me" until a caption pass fills it in.
+                parts.append(u'<figure><img src="%s" alt="" '
+                             u'role="presentation"/></figure>' % item['src'])
             elif kind == 'marker':
                 parts.append(item['html'])
         return ''.join(parts)

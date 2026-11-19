@@ -306,9 +306,12 @@ def _random_items(rng):
         if roll < 0.18:
             items.append(marker(page))
             page += rng.choice([1, 1, 1, 2])
-        elif roll < 0.26:
-            items.append(heading('CHAPTER %d' % page, page))
+        elif roll < 0.23:
+            items.append({'kind': 'image', 'page': page, 'top_y': 0,
+                          'src': 'p%03d.jpg' % len(items)})
         elif roll < 0.30:
+            items.append(heading('CHAPTER %d' % page, page))
+        elif roll < 0.34:
             items.append(hr(page))
         else:
             tail = rng.choice(['a sentence that ends', 'a clause that ran',
@@ -349,3 +352,7 @@ def test_fuzz_invariants(joiner):
         # placeholder is dropped
         assert '\x7f' not in ''.join(
             entry.get('text', '') for entry in out)
+        # plates may move to the end of the paragraph they sat in, but none
+        # may be dropped and their order may not change
+        assert [entry['src'] for entry in out if entry['kind'] == 'image'] \
+            == [entry['src'] for entry in items if entry['kind'] == 'image']
