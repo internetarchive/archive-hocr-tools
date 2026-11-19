@@ -252,6 +252,67 @@ def test_a_section_inside_the_ceiling_is_left_alone(generator):
     assert generator._cap_section_sizes(sections, limit=1200) == sections
 
 
+# --- when nothing was recognised as a chapter opening -----------------------
+
+def unwritten_book(pages=70):
+    """A book with no heading the deriver understands: one long preamble."""
+    return [page(i, para('text of printed page %d' % i, i), marker(i))
+            for i in range(pages)]
+
+
+def test_a_book_without_chapter_openings_is_cut_at_the_printed_pages(generator):
+    pages = unwritten_book()
+
+    sections = generator._group_sections(pages, body_size=52.0)
+
+    assert set(section['kind'] for section in sections) == {'chapter'}
+    assert [section['title'] for section in sections] == [
+        'Pages 1\u201320', 'Pages 21\u201340', 'Pages 41\u201360',
+        'Pages 61\u201370']
+    assert all(section['toc_title'] for section in sections), \
+        'each part needs an entry the reader can jump to'
+    assert sum(len(s['items']) for s in sections) == \
+        sum(len(p['items']) for p in pages)
+
+
+def test_the_page_labels_use_the_numbers_the_book_prints(generator):
+    generator.page_numbers = {0: '112', 19: '131', 20: '132', 39: '151'}
+
+    sections = generator._group_sections(unwritten_book(), body_size=52.0)
+
+    assert sections[0]['title'] == 'Pages 112\u2013131'
+    assert sections[1]['title'] == 'Pages 132\u2013151'
+
+
+def test_a_label_never_mixes_two_page_numberings(generator):
+    """Front matter is unnumbered in most books. Saying "Pages 2–6" for
+    twenty leaves because one end happens to carry a printed number would tell
+    the reader to scroll somewhere they are not."""
+    generator.page_numbers = {20: '6'}
+
+    sections = generator._group_sections(unwritten_book(), body_size=52.0)
+
+    assert sections[0]['title'] == 'Pages 1\u201320'
+
+
+def test_a_book_with_chapters_is_not_cut_up(generator):
+    pages = [page(0, h1('CHAPTER I', 0), para('a', 0))] + unwritten_book(70)[1:]
+
+    sections = generator._group_sections(pages, body_size=52.0)
+
+    assert len(sections) == 1
+    assert sections[0]['kind'] == 'chapter'
+    assert sections[0]['title'] == 'CHAPTER I'
+
+
+def test_a_short_book_is_left_as_one_file(generator):
+    pages = unwritten_book(30)
+
+    sections = generator._group_sections(pages, body_size=52.0)
+
+    assert [section['kind'] for section in sections] == ['preamble']
+
+
 def test_files_stay_unique_across_kinds(generator):
     pages = [page(1, para('unheading start', 1)),
              page(2, h1('PREFACE', 2), para('p', 2)),

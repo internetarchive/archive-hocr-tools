@@ -85,6 +85,14 @@ MAX_SECTION_BYTES = 200 * 1024
 # What the writer adds per block around what this renders: a newline and an
 # indent level. Measured on generated files as five bytes; rounded up.
 SECTION_INDENT_BYTES = 8
+# When nothing in a book was recognised as a chapter opening, the reader is
+# left with one file and an empty contents list. The fallback cuts the book at
+# printed page boundaries instead, which is not the author's structure but is
+# still something to jump with.
+FALLBACK_SECTION_PAGES = 20
+# A short book does not need jump points; only start cutting when the absence
+# of them would be felt.
+MIN_PAGES_FOR_PAGE_SECTIONS = 60
 
 # Namespace of the XHTML elements ebooklib emits (nav document head/title).
 XHTML_NS = '{http://www.w3.org/1999/xhtml}'
@@ -398,6 +406,10 @@ class EpubGenerator(object):
     # Pages shaped like a contents list or an index, where the numbers are the
     # text. Filled in by the furniture pass, which walks every page anyway.
     list_pages = frozenset()
+    # Printed page number per page, from the scan data. Assigned in the
+    # constructor; the default lets the structural decisions be made (and
+    # tested) without it, which turns off any claim about page numbers.
+    page_numbers = {}
 
     front_matter = (
         '<div class="offset">'
@@ -1503,6 +1515,7 @@ class EpubGenerator(object):
         # Assign file names: a running counter per kind so a preamble, a
         # front-matter section and chapters never collide.
         counters = {'preamble': 0, 'front': 0, 'chapter': 0}
+        sections = self._page_fallback(sections)
         for section in sections:
             kind = section['kind']
             counters[kind] += 1
@@ -1513,6 +1526,77 @@ class EpubGenerator(object):
             else:
                 section['file'] = 'chapter_%d.html' % counters[kind]
         return self._cap_section_sizes(sections)
+
+    def _chunks_by_pages(self, items, pages_per_chunk):
+        """Split a section's items at page boundaries, about N pages each.
+
+        The split goes where a page turns, so no paragraph is cut in the middle
+        of a line of text and the pagebreak marker stays with the page it opens.
+        """
+        chunks = []
+        current, seen = [], []
+        for item in items:
+            if item['page'] not in seen:
+                if len(seen) >= pages_per_chunk:
+                    chunks.append((seen, current))
+                    current, seen = [], []
+                seen.append(item['page'])
+            current.append(item)
+        if current:
+            chunks.append((seen, current))
+        return chunks
+
+    def _page_range_label(self, pages):
+        """"Pages 12–31", in the numbers the book prints on those pages.
+
+        Only when it prints both ends. The front matter of most books is
+        unnumbered, and mixing the book's leaf count at one end with its
+        printed number at the other would tell a reader that twenty pages are
+        five; without a printed number at both ends the label stays in the one
+        sequence it started in.
+        """
+        first = self.page_numbers.get(pages[0])
+        last = self.page_numbers.get(pages[-1])
+        if first and last:
+            return 'Pages %s\u2013%s' % (first, last)
+        return 'Pages %d\u2013%d' % (pages[0] + 1, pages[-1] + 1)
+
+    def _page_fallback(self, sections):
+        """Cut up a book in which no chapter opening was recognised.
+
+        A volume of poems, or a book whose headings are in another language,
+        yields no chapter sections at all: one file, one contents entry, and no
+        "start of the story" for the reader. The printed page is the only
+        structure left to use, and it is what the alternative -- nothing --
+        leaves them with.
+        """
+        if any(section['kind'] == 'chapter' for section in sections):
+            return sections
+        pages = {item['page'] for section in sections
+                 for item in section['items'] if item['kind'] != 'marker'}
+        if len(pages) < MIN_PAGES_FOR_PAGE_SECTIONS:
+            return sections
+        out = []
+        cut = 0
+        for section in sections:
+            if section['kind'] != 'preamble':
+                out.append(section)
+                continue
+            for part_pages, part_items in self._chunks_by_pages(
+                    section['items'], FALLBACK_SECTION_PAGES):
+                cut += 1
+                part = dict(section)
+                part['items'] = part_items
+                part['kind'] = 'chapter'
+                part['headings'] = []
+                part['title'] = self._page_range_label(part_pages)
+                part['toc_title'] = part['title']
+                out.append(part)
+        if cut:
+            print('No chapter openings recognised: cut the text into '
+                  '%d-page sections instead (%d files)' %
+                  (FALLBACK_SECTION_PAGES, cut))
+        return out
 
     def _split_items(self, items, limit):
         """Chunk a section's items so no chunk renders larger than `limit`.
@@ -1889,9 +1973,20 @@ class EpubGenerator(object):
                        if hocr.structure.is_toc_entry(t)]
             if not entries and section.get('toc_title'):
                 # A continuation part: split off from a file too large for a
-                # reading system, with nothing but this label to find it by.
+                # reading system, or a stretch of printed pages where no
+                # chapter opening was found. Either way the label is stated
+                # rather than read off a heading.
                 entries = [(section['file'], section['toc_title'])]
             toc.extend(entries)
+        if not toc:
+            # An empty contents list is not merely thin: the navigation
+            # document comes out with an empty list, which the conformance
+            # checker reports and some reading systems refuse. One honest
+            # entry is better than none.
+            first = next((section['file'] for section in sections
+                          if section['items']), None)
+            if first:
+                toc.append((first, 'Start'))
         self.toc_entries = toc
 
         self.has_text = words_found > 0
