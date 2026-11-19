@@ -55,6 +55,11 @@ FURNITURE_TOP_BAND = 0.12
 FURNITURE_MIN_PAGES = 2
 FURNITURE_RUN_GAP = 5
 FURNITURE_PREFIX_TOKENS = 2
+# A lone numeral is only dropped as the page's own number when it is set no
+# larger than this multiple of the body size. Chapter numbers are printed at
+# display size and are content; folios printed at display size are a book
+# design that does not exist.
+FURNITURE_FOLIO_MAX_SIZE = 1.5
 
 # Namespace of the XHTML elements ebooklib emits (nav document head/title).
 XHTML_NS = '{http://www.w3.org/1999/xhtml}'
@@ -991,8 +996,13 @@ class EpubGenerator(object):
         if not raw:
             return False
         folio = self.page_numbers.get(page_idx, '')
-        _numeral, rest = hocr.structure.split_folio_token(raw, folio)
+        numeral, rest = hocr.structure.split_folio_token(raw, folio)
         norm = hocr.structure.normalize_head_text(rest)
+        if not norm and numeral is None:
+            # An ornament or a punctuation scrap: it normalizes to the same
+            # empty key a folio-only line does, but it is not one, and the
+            # folio rules must not take it down with the page's number.
+            return False
         return (page_idx, norm) in self.furniture_drop
 
     def _collect_running_heads(self, body_size):
@@ -1019,11 +1029,16 @@ class EpubGenerator(object):
         * an occurrence is kept if it is set at body size or larger, or if
           it is the first heading-classifying occurrence of its run and the
           family is not folio-styled (running heads that embed the page's
-          own printed number are never kept).
+          own printed number are never kept);
+        * a line that is nothing but a numeral is the page's folio, and goes,
+          but only when the scan data confirms the numeral is this page's
+          number, it is not printed larger than the text, and the page is not
+          a contents or index (whose numbers are the text).
 
         Returns the set of ``(page index, normalized text)`` to drop.
         """
         occurrences = []
+        list_pages = set()
         for page_idx, page in enumerate(
                 hocr.parse.hocr_page_iterator(self.hocr_xml_file_path)):
             if page_idx in self.skip_pages:
@@ -1035,49 +1050,68 @@ class EpubGenerator(object):
             if not height:
                 continue
             limit = FURNITURE_TOP_BAND * height
+            page_lines = []
             for element in hocr.parse.hocr_page_to_word_data(page):
                 for line in element['lines']:
-                    if not line['words'] or line['bbox'][1] > limit:
+                    if not line['words']:
                         continue
                     raw = ' '.join(w['text'] for w in line['words']).strip()
                     if not raw:
                         continue
+                    page_lines.append(raw)
+                    if line['bbox'][1] > limit:
+                        continue
                     fontsize = max((w['fontsize'] or 0)
                                    for w in line['words'])
                     folio = self.page_numbers.get(page_idx, '')
-                    _numeral, rest = hocr.structure.split_folio_token(
+                    numeral, rest = hocr.structure.split_folio_token(
                         raw, folio)
                     norm = hocr.structure.normalize_head_text(rest)
-                    if not norm and _numeral is None:
+                    if not norm and numeral is None:
                         # Nothing left after stripping: an ornament line
                         # ("—", "***") that carries no words at all. Not
                         # a head, and not worth a family.
                         continue
                     occurrences.append({'page': page_idx, 'raw': raw,
-                                        'fontsize': fontsize, 'norm': norm})
-        return self._decide_furniture(occurrences, body_size)
+                                        'fontsize': fontsize, 'norm': norm,
+                                        'numeral': numeral})
+            # Contents and index pages hold columns of entries whose numbers
+            # are the text, so no folio rule may fire on them.
+            if hocr.structure.is_list_shaped(page_lines):
+                list_pages.add(page_idx)
+        return self._decide_furniture(occurrences, body_size, list_pages)
 
-    def _decide_furniture(self, occurrences, body_size):
+    def _decide_furniture(self, occurrences, body_size,
+                          list_pages=frozenset()):
         """Apply the furniture rules to collected top-band occurrences.
 
-        See :meth:`_collect_running_heads`. Returns the set of
-        ``(page index, normalized text)`` pairs to drop.
+        See :meth:`_collect_running_heads`. `list_pages` holds the pages whose
+        shape is a contents or index, where lone numbers are content. Returns
+        the set of ``(page index, normalized text)`` pairs to drop.
         """
         by_norm = {}
         for occurrence in occurrences:
             occurrence.setdefault('orig_norm', occurrence['norm'])
             by_norm.setdefault(occurrence['norm'], []).append(occurrence)
 
-        drop = set()
+        folio_drops = set()
         # Folio-only lines (nothing left after stripping the printed
         # number): the pagebreak marker carries that number, so the line
         # is furniture. This runs before the family logic because a
         # folio-only line recurs on every page and would otherwise form
         # a family whose first occurrence survives as a heading.
-        folio_only = {o['page'] for norm, occs in by_norm.items()
-                      if not norm for o in occs}
+        folio_only = {
+            o['page'] for norm, occs in by_norm.items()
+            if not norm for o in occs
+            # Whose number is it? Only the scan data can say: "m" is a roman
+            # numeral, a misread folio and the tail of a decorated initial.
+            if hocr.structure.folio_matches_token(
+                o.get('numeral'), self.page_numbers.get(o['page'], ''))
+            # Not too big to be a folio, and not a page that lists numbers.
+            and (o['fontsize'] or 0) <= body_size * FURNITURE_FOLIO_MAX_SIZE
+            and o['page'] not in list_pages}
         for page in sorted(folio_only):
-            drop.add((page, ''))
+            folio_drops.add((page, ''))
 
         # A real running head recurs a lot; a pair of identical lines is
         # only trusted when the lines read like heads (mostly caps), so
@@ -1094,7 +1128,7 @@ class EpubGenerator(object):
         if not families:
             # Only folio-only lines were collected: return them without
             # running the family logic at all.
-            return drop
+            return folio_drops
 
         # Mangled variants of a head ("THE BOOK OF LOVE of" for
         # "THE BOOK OF LOVE 107") join the family of the phrase they
@@ -1111,7 +1145,7 @@ class EpubGenerator(object):
                     by_norm[family_norm].append(occurrence)
                     break
 
-        drop = set()
+        drop = set(folio_drops)
         for norm, occs in by_norm.items():
             if norm not in families:
                 continue

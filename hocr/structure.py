@@ -277,6 +277,43 @@ def is_folio_only(text):
     return bool(DIGITS_TOKEN_RE.match(token)) or is_roman_numeral(token)
 
 
+def folio_matches_token(numeral, folio):
+    """True if a stripped numeral is a readable form of this page's folio.
+
+    Calling a line "the page's number" is only safe when one can say whose
+    number it is: a lone "m" is a roman numeral, a misread folio and the tail
+    of a decorated initial by turns, and only the scan data's printed folio
+    settles it. Truncation is tolerated for digits ("53" for "353") because
+    losing a leading digit is a common OCR failure; a roman numeral has to
+    match exactly, since its letters are ordinary letters elsewhere.
+    """
+    numeral = (numeral or '').strip().lower()
+    folio = (folio or '').strip().lower()
+    if not numeral or not folio:
+        return False
+    variant = numeral.translate(_FOLIO_CONFUSIONS)
+    if variant == folio:
+        return True
+    return variant.isdigit() and variant in folio
+
+
+def is_list_shaped(lines, min_lines=6, min_fraction=0.4):
+    """True for contents and index pages: short lines ending in a number.
+
+    On such a page the numbers are the content, so "this lone number is a
+    folio" must not be applied to it. The shape is distinctive enough to
+    detect without reading a single word: many lines, few tokens each, and the
+    last token of most of them a number.
+    """
+    lines = [line for line in (lines or []) if line and line.strip()]
+    if len(lines) < min_lines:
+        return False
+    ending = sum(1 for line in lines
+                 if len(line.split()) <= 6
+                 and is_folio_only(line.split()[-1]))
+    return ending >= max(4, min_fraction * len(lines))
+
+
 def carries_folio(text, folio):
     """True if the line's first or last token is the page's printed folio.
 
