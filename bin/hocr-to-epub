@@ -1631,6 +1631,37 @@ class EpubGenerator(object):
             start = end
         return parts
 
+    def _landmarks(self, kind_by_href, contents_href=None, cover_set=False):
+        """The entry points a reader wants to jump to: cover, contents, the
+        front-matter pieces, the start of the text.
+
+        One entry per kind. A landmark says where the foreword *is*, and when
+        the file it lived in had to be cut for size the continuation is not a
+        second foreword.
+        """
+        guide = []
+        taken = set()
+
+        def add(kind, label, href):
+            if kind in taken:
+                return
+            taken.add(kind)
+            guide.append({'type': kind,
+                          'title': hocr.structure.label_case(label),
+                          'href': href})
+
+        if cover_set:
+            add('cover', 'Cover', 'cover.xhtml')
+        if contents_href:
+            add('toc', 'Contents', contents_href)
+        for href, label in self.toc_entries:
+            fm = hocr.structure.front_matter_type(label)
+            if fm and fm != 'toc':
+                add(fm, label, href)
+            elif kind_by_href.get(href) == 'chapter':
+                add('bodymatter', label, href)
+        return guide
+
     def _cap_section_sizes(self, sections, limit=MAX_SECTION_BYTES):
         """Split the sections whose document would come out too large.
 
@@ -1657,7 +1688,11 @@ class EpubGenerator(object):
                     continue
                 stem, extension = section['file'].rsplit('.', 1)
                 part['file'] = '%s_part_%d.%s' % (stem, index, extension)
-                title = section['title'] or 'Front matter'
+                # Normalised here rather than on the way out: the label of a
+                # mixed string is left as written, so appending to the raw
+                # heading would read "FOREWORD (continued)".
+                title = hocr.structure.label_case(
+                    section['title'] or 'Front matter')
                 part['title'] = '%s (continued)' % title
                 # The contents entry is stated rather than found: a
                 # continuation has no heading of its own to read it from.
@@ -2022,25 +2057,8 @@ class EpubGenerator(object):
         # chapter opened with nothing but its number is a chapter.
         kind_by_href = {section['file']: section['kind']
                         for section in sections}
-        guide = []
-        if cover_set:
-            guide.append({'type': 'cover', 'title': 'Cover',
-                          'href': 'cover.xhtml'})
-        if contents_href:
-            guide.append({'type': 'toc', 'title': 'Contents', 'href': contents_href})
-        bodymatter_set = False
-        for href, title in self.toc_entries:
-            fm = hocr.structure.front_matter_type(title)
-            if fm and fm != 'toc':
-                guide.append({'type': fm,
-                              'title': hocr.structure.label_case(title),
-                              'href': href})
-            elif not bodymatter_set and kind_by_href.get(href) == 'chapter':
-                guide.append({'type': 'bodymatter',
-                              'title': hocr.structure.label_case(title),
-                              'href': href})
-                bodymatter_set = True
-        self.book.guide = guide
+        self.book.guide = self._landmarks(kind_by_href, contents_href,
+                                          cover_set)
 
         self.book.add_item(epub.EpubNcx())
         self.book.add_item(epub.EpubNav())

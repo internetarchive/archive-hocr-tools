@@ -247,10 +247,10 @@ def test_the_parts_are_named_titled_and_listed(generator):
     assert out[0]['file'] == 'chapter_1.html'
     assert out[0]['title'] == 'INDEX'
     assert out[1]['file'] == 'chapter_1_part_2.html'
-    assert out[1]['title'] == 'INDEX (continued)'
+    assert out[1]['title'] == 'Index (continued)'
     # A continuation has no heading of its own; the entry is stated.
     assert out[1]['headings'] == []
-    assert out[1]['toc_title'] == 'INDEX (continued)'
+    assert out[1]['toc_title'] == 'Index (continued)'
     assert [item for part in out for item in part['items']] == items
 
 
@@ -335,3 +335,50 @@ def test_files_stay_unique_across_kinds(generator):
     assert len(files) == len(set(files))
     assert files == ['preamble.html', 'front_1.html', 'chapter_1.html',
                      'front_2.html']
+
+
+# --- landmarks --------------------------------------------------------------
+
+def test_each_landmark_appears_once(generator):
+    """A landmark says where the foreword *is*. Cutting the file it lives in
+    into four pieces for size does not make four forewords."""
+    generator.toc_entries = [('front_2.html', 'Foreword'),
+                             ('front_2_part_2.html', 'Foreword (continued)'),
+                             ('front_2_part_3.html', 'Foreword (continued)'),
+                             ('chapter_1.html', '1'),
+                             ('chapter_2.html', '2')]
+    kinds = {'front_2.html': 'front', 'front_2_part_2.html': 'front',
+             'front_2_part_3.html': 'front', 'chapter_1.html': 'chapter',
+             'chapter_2.html': 'chapter'}
+
+    guide = generator._landmarks(kinds, cover_set=True)
+
+    assert [entry['type'] for entry in guide] == [
+        'cover', 'foreword', 'bodymatter']
+    assert [entry['href'] for entry in guide] == [
+        'cover.xhtml', 'front_2.html', 'chapter_1.html']
+
+
+def test_the_contents_page_is_the_toc_landmark(generator):
+    generator.toc_entries = [('front_1.html', 'Contents'),
+                             ('chapter_1.html', 'CHAPTER I')]
+
+    guide = generator._landmarks({'front_1.html': 'front',
+                                  'chapter_1.html': 'chapter'},
+                                 contents_href='front_1.html')
+
+    assert [entry['type'] for entry in guide] == ['toc', 'bodymatter']
+
+
+def test_a_continuation_is_titled_in_the_casing_the_reader_sees(generator):
+    """The label of a heading that is written in capitals is left as written,
+    so the suffix has to go on the normalised title or the contents list reads
+    "FOREWORD (continued)"."""
+    items = [para('x' * 200, 1) for _ in range(20)]
+    sections = [{'kind': 'front', 'title': 'FOREWORD', 'file': 'front_1.html',
+                 'headings': ['FOREWORD'], 'items': items}]
+
+    out = generator._cap_section_sizes(sections, limit=1200)
+
+    assert out[1]['title'] == 'Foreword (continued)'
+    assert out[1]['toc_title'] == 'Foreword (continued)'
