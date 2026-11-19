@@ -1,0 +1,195 @@
+"""Where sections start, and where they must not.
+
+The deriver cuts the book into one file per section at every level-1 heading,
+and the reader's chapter list is those headings. Two mistakes make the books
+the testers complained about: a chapter that is not recognised leaves its pages
+in the previous file -- "one 655 KB file with two entries in the contents" --
+and a heading that is really a running head or a recurring subhead invents a
+chapter every time it appears.
+"""
+import importlib.machinery
+import importlib.util
+from os.path import dirname, join
+
+import pytest
+
+import hocr.structure as structure
+
+
+def load_tool():
+    here = dirname(__file__)
+    loader = importlib.machinery.SourceFileLoader(
+        'hocr_to_epub', join(here, '..', 'bin', 'hocr-to-epub'))
+    spec = importlib.util.spec_from_loader('hocr_to_epub', loader)
+    module = importlib.util.module_from_spec(spec)
+    loader.exec_module(module)
+    return module
+
+
+@pytest.fixture(scope='module')
+def tool():
+    return load_tool()
+
+
+@pytest.fixture
+def generator(tool):
+    return tool.EpubGenerator.__new__(tool.EpubGenerator)
+
+
+def h1(text, page, fontsize=100.0):
+    return {'kind': 'heading', 'level': 1, 'page': page, 'top_y': 100,
+            'text': text, 'fontsize': fontsize}
+
+
+def para(text, page):
+    return {'kind': 'para', 'page': page, 'top_y': 200, 'text': text}
+
+
+def page(page_idx, *items):
+    headings = [item['text'] for item in items
+                if item['kind'] == 'heading' and item['level'] == 1]
+    return {'page': page_idx, 'items': list(items), 'headings': headings,
+            'has_words': True, 'has_images': False}
+
+
+# --- reading a number as a chapter number -----------------------------------
+
+@pytest.mark.parametrize('token,value', [
+    ('i', 1), ('ix', 9), ('xiv', 14), ('xxviii', 28), ('mcm', 1900),
+    ('iiii', None),      # not a written numeral
+    ('mxmi', None),
+    ('12', None),        # arabic is not roman
+    ('', None),
+])
+def test_roman_value(token, value):
+    assert structure.roman_value(token) == value
+
+
+@pytest.mark.parametrize('text,expected', [
+    ('1', True),
+    ('7.', True),                       # "7." with the printed full stop
+    ('XII', True),
+    ('I', True),
+    ('200', True),
+    ('201', False),                     # not a chapter, something else
+    ('1984', False),                    # a year set large
+    ('Chapter 12', False),              # has words
+    ('42 items', False),
+    ('', False),
+])
+def test_is_bare_number(text, expected):
+    assert structure.is_bare_number(text) is expected
+
+
+# --- what a heading is allowed to start -------------------------------------
+
+def test_a_bare_number_in_display_type_opens_a_chapter(generator):
+    assert generator._section_kind('3', fontsize=110.0, body_size=52.0) \
+        == 'chapter'
+
+
+def test_the_same_numeral_at_text_size_opens_nothing(generator):
+    """At text size this is a folio or a list entry, not a chapter."""
+    assert generator._section_kind('3', fontsize=52.0, body_size=52.0) is None
+
+
+def test_a_number_opens_nothing_when_the_body_size_is_unknown(generator):
+    assert generator._section_kind('3', fontsize=110.0, body_size=0.0) is None
+
+
+def test_a_year_in_display_type_opens_nothing(generator):
+    assert generator._section_kind('1984', fontsize=110.0, body_size=52.0) \
+        is None
+
+
+def test_ordinary_headings_still_work(generator):
+    assert generator._section_kind('CHAPTER VII', 40.0, 52.0) == 'chapter'
+    assert generator._section_kind('PREFACE', 40.0, 52.0) == 'front'
+    assert generator._section_kind('She walked to the', 40.0, 52.0) is None
+
+
+def test_a_bare_number_belongs_in_the_contents():
+    """Cutting the file at chapter six is half the job; the reader has to be
+    able to jump there."""
+    assert structure.is_toc_entry('6')
+    assert structure.is_toc_entry('XII')
+    assert not structure.is_toc_entry('1984')
+    assert not structure.is_toc_entry('She walked to the')
+
+
+# --- grouping ----------------------------------------------------------------
+
+def test_chapters_open_at_bare_numbers(generator):
+    pages = [page(1, h1('1', 1), para('it began', 1)),
+             page(2, h1('2', 2, fontsize=110.0), para('and went on', 2))]
+
+    sections = generator._group_sections(pages, body_size=52.0)
+
+    assert [s['kind'] for s in sections] == ['chapter', 'chapter']
+    assert [s['file'] for s in sections] == ['chapter_1.html',
+                                             'chapter_2.html']
+
+
+def test_a_recurring_heading_starts_no_section(generator):
+    """A book with a "Chapter Summary" box on every chapter ends: the boxes are
+    subheads, not chapters, and must not each become a contents entry."""
+    pages = [page(p, h1('Chapter Summary', p),
+                  para('what came before, page %d' % p, p))
+             for p in range(1, 5)]
+
+    sections = generator._group_sections(pages, body_size=52.0)
+
+    assert len(sections) == 1
+    assert sections[0]['headings'] == []
+    assert sum(1 for item in sections[0]['items']
+               if item['kind'] == 'heading') == 4
+
+
+def test_a_heading_used_twice_is_still_a_section(generator):
+    """A preface to the first edition and one to the second are two sections.
+    Only a pattern of recurrence says "this is not a title"."""
+    pages = [page(1, h1('PREFACE', 1), para('a', 1)),
+             page(2, h1('PREFACE', 2), para('b', 2))]
+
+    sections = generator._group_sections(pages, body_size=52.0)
+
+    assert [s['kind'] for s in sections] == ['front', 'front']
+    assert [s['title'] for s in sections] == ['PREFACE', 'PREFACE']
+
+
+def test_a_contents_page_starts_no_chapters(generator):
+    pages = [page(1, h1('CONTENTS', 1), h1('CHAPTER I', 1), h1('CHAPTER II', 1),
+                  para('1  42', 1))]
+
+    sections = generator._group_sections(pages, body_size=52.0)
+
+    assert [s['kind'] for s in sections] == ['front']
+    assert [s['title'] for s in sections] == ['CONTENTS']
+
+
+def test_a_numbered_contents_list_starts_no_chapters(generator):
+    """A modern contents page lists "1 / 2 / 3" as headings. The page is
+    recognised by its shape, not by the word CONTENTS, which many books do not
+    print legibly -- or at all."""
+    generator.list_pages = {1}
+    pages = [page(1, h1('1', 1), h1('2', 1), h1('3', 1),
+                  para('1  7', 1))]
+
+    sections = generator._group_sections(pages, body_size=52.0)
+
+    assert len(sections) == 1
+    assert sections[0]['kind'] == 'preamble'
+
+
+def test_files_stay_unique_across_kinds(generator):
+    pages = [page(1, para('unheading start', 1)),
+             page(2, h1('PREFACE', 2), para('p', 2)),
+             page(3, h1('CHAPTER I', 3), para('c', 3)),
+             page(4, h1('PREFACE', 4), para('p2', 4))]
+
+    sections = generator._group_sections(pages, body_size=52.0)
+    files = [s['file'] for s in sections]
+
+    assert len(files) == len(set(files))
+    assert files == ['preamble.html', 'front_1.html', 'chapter_1.html',
+                     'front_2.html']

@@ -8,7 +8,7 @@ import tarfile
 import zipfile
 import html
 
-from collections import OrderedDict
+from collections import Counter, OrderedDict
 from datetime import datetime, timezone
 from typing import List, Optional
 
@@ -67,6 +67,14 @@ FURNITURE_PREFIX_TOKENS = 2
 # display size and are content; folios printed at display size are a book
 # design that does not exist.
 FURNITURE_FOLIO_MAX_SIZE = 1.5
+
+# A chapter opened with nothing but its number is set at least this much
+# larger than the body text. The same numeral at text size is a folio or a
+# number in a list, not a chapter.
+CHAPTER_MIN_NUMBER_SIZE = 1.5
+# A level-1 heading used this many times is a recurring subhead or a running
+# head rather than a section start.
+SECTION_MAX_HEADING_REPEATS = 3
 
 # Namespace of the XHTML elements ebooklib emits (nav document head/title).
 XHTML_NS = '{http://www.w3.org/1999/xhtml}'
@@ -377,6 +385,9 @@ class EpubGenerator(object):
     has_text = False
     has_images = False
     print_illustrations = False
+    # Pages shaped like a contents list or an index, where the numbers are the
+    # text. Filled in by the furniture pass, which walks every page anyway.
+    list_pages = frozenset()
 
     front_matter = (
         '<div class="offset">'
@@ -1142,6 +1153,7 @@ class EpubGenerator(object):
             # are the text, so no folio rule may fire on them.
             if hocr.structure.is_list_shaped(page_lines):
                 list_pages.add(page_idx)
+        self.list_pages = frozenset(list_pages)
         return self._decide_furniture(occurrences, body_size, list_pages)
 
     def _decide_furniture(self, occurrences, body_size,
@@ -1374,7 +1386,7 @@ class EpubGenerator(object):
                 parts.append(item['html'])
         return ''.join(parts)
 
-    def _section_kind(self, title):
+    def _section_kind(self, title, fontsize=0.0, body_size=0.0):
         """Which section a level-1 heading starts: a chapter, a front-matter
         section, or None (a display line that belongs to the current
         section).
@@ -1389,9 +1401,18 @@ class EpubGenerator(object):
         if hocr.structure.is_caps_heading(title) and \
                 hocr.structure.CHAPTER_THE_RE.match(title):
             return 'chapter'
+        # A chapter opened with nothing but its number. Size is what tells it
+        # from the same numeral printed small in the head or foot band, which
+        # is the page's folio and has already gone as furniture: the printer
+        # set the chapter number as display type, and a folio set as display
+        # type is a book design that does not exist. Without a known body size
+        # the claim cannot be made, so the heading opens nothing.
+        if body_size and fontsize >= body_size * CHAPTER_MIN_NUMBER_SIZE and \
+                hocr.structure.is_bare_number(title):
+            return 'chapter'
         return None
 
-    def _group_sections(self, page_data):
+    def _group_sections(self, page_data, body_size=0.0):
         """Group the pages' content items into sections, one XHTML file
         each.
 
@@ -1410,20 +1431,38 @@ class EpubGenerator(object):
             return {'kind': kind, 'title': title, 'items': [],
                     'file': None, 'headings': []}
 
+        # A heading that repeats is not a section start. A book whose
+        # "Chapter Summary" boxes were read as headings would otherwise open a
+        # chapter -- and get a table-of-contents entry -- for every box, all
+        # with the same words.
+        counts = Counter()
+        for data in page_data:
+            for title in data['headings']:
+                counts[hocr.structure.normalize_head_text(title)] += 1
+        repeats = {norm for norm, count in counts.items()
+                   if count >= SECTION_MAX_HEADING_REPEATS}
+
         for data in page_data:
             # A page that lists several chapters is the printed contents
             # page: its chapter headings belong to the contents section,
             # not to chapter starts. (Title matching is unreliable here
             # because the OCR of the contents page adds noise like
             # "CHAPTER IX PAGE".)
-            is_contents_page = sum(
+            is_contents_page = data['page'] in self.list_pages or sum(
                 1 for t in data['headings']
                 if hocr.structure.is_chapter(t)) > 1
             for item in data['items']:
                 if item['kind'] == 'heading' and item['level'] == 1:
                     title = self._clean_heading_title(
                         html.unescape(item['text']))
-                    kind = self._section_kind(title)
+                    if hocr.structure.normalize_head_text(title) in repeats:
+                        # Content, and not a table-of-contents entry either.
+                        if current is None:
+                            current = new_section('preamble', None)
+                        current['items'].append(item)
+                        continue
+                    kind = self._section_kind(title, item.get('fontsize'),
+                                              body_size)
                     if kind == 'chapter' and is_contents_page:
                         # A contents page's chapter lines belong to the
                         # contents section: they stay in the section's
@@ -1613,7 +1652,8 @@ class EpubGenerator(object):
                     level = kind[1]
                     page_items.append(
                         {'kind': 'heading', 'level': level, 'page': page_idx,
-                         'top_y': top_y, 'text': page_text})
+                         'top_y': top_y, 'text': page_text,
+                         'fontsize': fontsize})
                     if level == 1:
                         page_headings.append(
                             self._clean_heading_title(html.unescape(page_text)))
@@ -1698,7 +1738,7 @@ class EpubGenerator(object):
 
         # Group the pages into sections, one XHTML file each, so
         # paragraphs can continue across page turns.
-        sections = self._group_sections(page_data)
+        sections = self._group_sections(page_data, body_size)
 
         # Emit one file per section with the joining pass, which merges
         # paragraphs that form one sentence across a page turn or an OCR
@@ -1797,6 +1837,11 @@ class EpubGenerator(object):
         # image: the landmark must link to a content document, and
         # epubcheck flags an image reference here (OPF-032) and the
         # unlinked non-linear page (OPF-096).
+        # Which kind of section each file is, so the landmarks agree with how
+        # the book was actually cut up rather than re-reading its titles: a
+        # chapter opened with nothing but its number is a chapter.
+        kind_by_href = {section['file']: section['kind']
+                        for section in sections}
         guide = []
         if cover_set:
             guide.append({'type': 'cover', 'title': 'Cover',
@@ -1810,7 +1855,7 @@ class EpubGenerator(object):
                 guide.append({'type': fm,
                               'title': hocr.structure.label_case(title),
                               'href': href})
-            elif not bodymatter_set and hocr.structure.is_chapter(title):
+            elif not bodymatter_set and kind_by_href.get(href) == 'chapter':
                 guide.append({'type': 'bodymatter',
                               'title': hocr.structure.label_case(title),
                               'href': href})

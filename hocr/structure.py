@@ -152,6 +152,10 @@ def is_toc_entry(text):
     text = (text or '').strip()
     if CHAPTER_RE.match(text) or front_matter_type(text) is not None:
         return True
+    if is_bare_number(text):
+        # A chapter opened with just its number is still a chapter: this is
+        # where a reader looks for "6" when the book says chapter six.
+        return True
     return bool(CHAPTER_THE_RE.match(text) and is_caps_heading(text))
 
 
@@ -262,6 +266,67 @@ def is_mostly_caps(text):
     if len(alpha) < 3:
         return False
     return sum(1 for c in alpha if c.isupper()) >= 0.75 * len(alpha)
+
+
+# A chapter number this large is not a chapter: it is a year, a page count or
+# an amount that happened to be set large.
+MAX_CHAPTER_NUMBER = 200
+
+_ROMAN_VALUES = {'i': 1, 'v': 5, 'x': 10, 'l': 50, 'c': 100, 'd': 500,
+                 'm': 1000}
+
+
+def _to_roman(number):
+    out = []
+    for value, numeral in ((1000, 'm'), (900, 'cm'), (500, 'd'), (400, 'cd'),
+                           (100, 'c'), (90, 'xc'), (50, 'l'), (40, 'xl'),
+                           (10, 'x'), (9, 'ix'), (5, 'v'), (4, 'iv'),
+                           (1, 'i')):
+        while number >= value:
+            out.append(numeral)
+            number -= value
+    return ''.join(out)
+
+
+def roman_value(token):
+    """Value of a roman numeral, or None if it is not one.
+
+    It has to be a *written* numeral, not merely a string of roman letters:
+    the loose character class that recognises a folio also accepts "iiii" and
+    "mxmi", and a misread folio must not become chapter four. Round-tripping
+    through the canonical spelling is what tells them apart.
+    """
+    token = (token or '').strip().lower()
+    if not token or not ROMAN_TOKEN_RE.match(token):
+        return None
+    total = 0
+    previous = 0
+    for char in reversed(token):
+        value = _ROMAN_VALUES.get(char)
+        if value is None:
+            return None
+        total += value if value >= previous else -value
+        previous = max(previous, value)
+    return total if _to_roman(total) == token else None
+
+
+def is_bare_number(text):
+    """True for a heading that is a chapter number and nothing else.
+
+    Plenty of books open a chapter with just "1" or "XII", and a line that is
+    only a numeral is otherwise the very shape of a leftover folio. Callers
+    have to bring the evidence that separates the two -- a chapter number is
+    set as display type where a folio is set small, and a folio sits in the
+    head or foot band that the furniture pass has already cleared -- and this
+    only says the shape is possible.
+    """
+    token = (text or '').strip().strip('.) \t\u2013\u2014')
+    if not token or len(token.split()) != 1:
+        return False
+    if token.isdigit():
+        return 0 < int(token) <= MAX_CHAPTER_NUMBER
+    value = roman_value(token)
+    return value is not None and 0 < value <= MAX_CHAPTER_NUMBER
 
 
 def is_folio_only(text):
