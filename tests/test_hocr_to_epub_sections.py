@@ -45,6 +45,11 @@ def para(text, page):
     return {'kind': 'para', 'page': page, 'top_y': 200, 'text': text}
 
 
+def marker(page, html_text=None):
+    return {'kind': 'marker', 'page': page, 'top_y': 0,
+            'html': html_text or '<pb %d></pb>' % page}
+
+
 def page(page_idx, *items):
     headings = [item['text'] for item in items
                 if item['kind'] == 'heading' and item['level'] == 1]
@@ -179,6 +184,72 @@ def test_a_numbered_contents_list_starts_no_chapters(generator):
 
     assert len(sections) == 1
     assert sections[0]['kind'] == 'preamble'
+
+
+# --- the size ceiling -------------------------------------------------------
+
+def test_a_long_section_is_cut_between_paragraphs(generator):
+    items = [para('x' * 200, 1) for _ in range(20)]
+
+    parts = generator._split_items(items, limit=1200)
+
+    assert len(parts) > 1
+    assert [item for part in parts for item in part] == items
+    assert all(len(generator._render_items(part)) <= 1200 for part in parts)
+
+
+def test_a_split_never_closes_on_a_pagebreak_or_a_heading(generator):
+    """A marker left at the end of a file would point "page 12" at the bottom
+    of the previous page, and a heading on its own looks like an empty
+    chapter."""
+    items = []
+    for page_idx in range(1, 12):
+        items.append(para('x' * 200, page_idx))
+        items.append(marker(page_idx + 1))
+        items.append(h1('HEADING %d' % page_idx, page_idx))
+
+    parts = generator._split_items(items, limit=1200)
+
+    assert len(parts) > 1
+    for part in parts[:-1]:
+        assert part[-1]['kind'] == 'para'
+
+
+def test_a_block_bigger_than_the_ceiling_gets_its_own_file(generator):
+    """It cannot be cut, but the walk has to get past it rather than stop."""
+    huge = para('y' * 5000, 1)
+    items = [huge, para('after it', 2)]
+
+    parts = generator._split_items(items, limit=1000)
+
+    assert parts[0] == [huge]
+    assert len(parts) == 2
+
+
+def test_the_parts_are_named_titled_and_listed(generator):
+    items = [para('x' * 200, 1) for _ in range(20)]
+    sections = [{'kind': 'chapter', 'title': 'INDEX', 'file': 'chapter_1.html',
+                 'headings': ['INDEX'], 'items': items}]
+
+    out = generator._cap_section_sizes(sections, limit=1200)
+
+    assert len(out) > 1
+    assert out[0]['file'] == 'chapter_1.html'
+    assert out[0]['title'] == 'INDEX'
+    assert out[1]['file'] == 'chapter_1_part_2.html'
+    assert out[1]['title'] == 'INDEX (continued)'
+    # A continuation has no heading of its own; the entry is stated.
+    assert out[1]['headings'] == []
+    assert out[1]['toc_title'] == 'INDEX (continued)'
+    assert [item for part in out for item in part['items']] == items
+
+
+def test_a_section_inside_the_ceiling_is_left_alone(generator):
+    sections = [{'kind': 'chapter', 'title': 'CHAPTER I',
+                 'file': 'chapter_1.html', 'headings': ['CHAPTER I'],
+                 'items': [para('short', 1)]}]
+
+    assert generator._cap_section_sizes(sections, limit=1200) == sections
 
 
 def test_files_stay_unique_across_kinds(generator):

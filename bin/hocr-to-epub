@@ -75,6 +75,16 @@ CHAPTER_MIN_NUMBER_SIZE = 1.5
 # A level-1 heading used this many times is a recurring subhead or a running
 # head rather than a section start.
 SECTION_MAX_HEADING_REPEATS = 3
+# Hard ceiling on one content document. Some reading systems refuse to open a
+# book whose individual XHTML file grows past about 250 KB, which an index or a
+# book without recognisable chapters can reach on its own -- so the limit is
+# enforced here rather than trusted to the book's structure. It is set below
+# the wall to leave room for the document boilerplate and the pagebreak markers
+# inside the file.
+MAX_SECTION_BYTES = 200 * 1024
+# What the writer adds per block around what this renders: a newline and an
+# indent level. Measured on generated files as five bytes; rounded up.
+SECTION_INDENT_BYTES = 8
 
 # Namespace of the XHTML elements ebooklib emits (nav document head/title).
 XHTML_NS = '{http://www.w3.org/1999/xhtml}'
@@ -1502,7 +1512,77 @@ class EpubGenerator(object):
                 section['file'] = 'front_%d.html' % counters[kind]
             else:
                 section['file'] = 'chapter_%d.html' % counters[kind]
-        return sections
+        return self._cap_section_sizes(sections)
+
+    def _split_items(self, items, limit):
+        """Chunk a section's items so no chunk renders larger than `limit`.
+
+        Each block is measured as it will be written, plus the indent the
+        library puts in front of every element it emits -- five bytes a block
+        over an index of nine thousand entries is 50 KB of whitespace that the
+        rendered string does not contain and the file does.
+        """
+        sizes = [len(self._render_items([item])) + SECTION_INDENT_BYTES
+                 for item in items]
+        parts = []
+        start = 0
+        while start < len(items):
+            end = start
+            size = 0
+            while end < len(items) and size + sizes[end] <= limit:
+                size += sizes[end]
+                end += 1
+            if end == start:
+                # A single block larger than the ceiling: it cannot be cut, so
+                # it gets a file of its own and the walk continues past it.
+                end = start + 1
+            elif end < len(items):
+                # Do not close a file on a pagebreak marker or a heading: the
+                # marker belongs at the first word of the page it opens, and a
+                # heading on its own looks like an empty chapter.
+                while end > start + 1 and \
+                        items[end - 1]['kind'] in ('marker', 'heading'):
+                    end -= 1
+            parts.append(items[start:end])
+            start = end
+        return parts
+
+    def _cap_section_sizes(self, sections, limit=MAX_SECTION_BYTES):
+        """Split the sections whose document would come out too large.
+
+        An index, or a book whose chapters nothing recognised, is one section
+        by every structural rule and 600 KB of text. The cut goes between
+        paragraphs; the parts after the first say so in their title and get
+        their own contents entry, so nothing becomes unreachable because the
+        file it lives in changed.
+        """
+        out = []
+        split = 0
+        for section in sections:
+            parts = self._split_items(section['items'], limit)
+            if len(parts) <= 1:
+                out.append(section)
+                continue
+            split += 1
+            for index, items in enumerate(parts, start=1):
+                part = dict(section)
+                part['items'] = items
+                part['headings'] = section['headings'] if index == 1 else []
+                if index == 1:
+                    out.append(part)
+                    continue
+                stem, extension = section['file'].rsplit('.', 1)
+                part['file'] = '%s_part_%d.%s' % (stem, index, extension)
+                title = section['title'] or 'Front matter'
+                part['title'] = '%s (continued)' % title
+                # The contents entry is stated rather than found: a
+                # continuation has no heading of its own to read it from.
+                part['toc_title'] = '%s (continued)' % title
+                out.append(part)
+        if split:
+            print('Split %d oversized section(s) to stay under %d KB per file'
+                  % (split, limit // 1024))
+        return out
 
     def generate(self, warn_confidence_threshold=75.0, remove_confidence_threshold=None):
         self.book = epub.EpubBook()
@@ -1805,8 +1885,13 @@ class EpubGenerator(object):
                 # ToC (the 'CONTENTS' heading already carries the 'toc'
                 # landmark above).
                 continue
-            toc.extend((section['file'], t) for t in titles
-                       if hocr.structure.is_toc_entry(t))
+            entries = [(section['file'], t) for t in titles
+                       if hocr.structure.is_toc_entry(t)]
+            if not entries and section.get('toc_title'):
+                # A continuation part: split off from a file too large for a
+                # reading system, with nothing but this label to find it by.
+                entries = [(section['file'], section['toc_title'])]
+            toc.extend(entries)
         self.toc_entries = toc
 
         self.has_text = words_found > 0
