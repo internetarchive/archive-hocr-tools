@@ -74,7 +74,10 @@ def test_roman_value(token, value):
     ('1', True),
     ('7.', True),                       # "7." with the printed full stop
     ('XII', True),
-    ('I', True),
+    ('II', True),
+    ('I', False),                      # one letter: an initial, a column, a
+                                      # folio misread as a letter
+    ('L', False),
     ('200', True),
     ('201', False),                     # not a chapter, something else
     ('1984', False),                    # a year set large
@@ -107,6 +110,12 @@ def test_a_year_in_display_type_opens_nothing(generator):
         is None
 
 
+def test_a_single_roman_letter_opens_nothing(generator):
+    """A dropped initial, a table column, or a folio misread as a letter. At
+    display size nothing distinguishes them from chapter fifty."""
+    assert generator._section_kind('L', fontsize=110.0, body_size=52.0) is None
+
+
 def test_ordinary_headings_still_work(generator):
     assert generator._section_kind('CHAPTER VII', 40.0, 52.0) == 'chapter'
     assert generator._section_kind('PREFACE', 40.0, 52.0) == 'front'
@@ -118,6 +127,7 @@ def test_a_bare_number_belongs_in_the_contents():
     able to jump there."""
     assert structure.is_toc_entry('6')
     assert structure.is_toc_entry('XII')
+    assert not structure.is_toc_entry('L')
     assert not structure.is_toc_entry('1984')
     assert not structure.is_toc_entry('She walked to the')
 

@@ -326,7 +326,14 @@ def is_bare_number(text):
     if token.isdigit():
         return 0 < int(token) <= MAX_CHAPTER_NUMBER
     value = roman_value(token)
-    return value is not None and 0 < value <= MAX_CHAPTER_NUMBER
+    if value is None or not 0 < value <= MAX_CHAPTER_NUMBER:
+        return False
+    # One roman letter does not claim a chapter. A lone "L" in display type is a
+    # dropped initial, a table column, or a folio misread as a letter -- Betty
+    # Crocker has all three -- and no caller can tell those from chapter fifty.
+    # Two letters at least: a book that opens its chapters "I", "II", "III"
+    # still gets them, from the second chapter onwards.
+    return len(token) > 1
 
 
 def is_folio_only(text):
