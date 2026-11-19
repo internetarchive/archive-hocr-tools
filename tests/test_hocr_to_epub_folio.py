@@ -147,6 +147,22 @@ def test_without_scan_data_no_number_is_claimed(generator):
     assert generator._decide_furniture([folio(0, '12')], body_size=10) == set()
 
 
+# --- what may be looked at in the foot band ---------------------------------
+
+@pytest.mark.parametrize('raw,numeral,folio,expected', [
+    ('53', '53', '53', True),                  # the page's own number
+    ('24 THE BOOK OF LOVE', None, '24', True),  # a running foot, number in it
+    ('24 THE BOOK OF LOVE', None, '88', False),  # not this page's number
+    ('*If using self-rising flour, omit the salt', None, '112', False),
+    ('Chapter Summary', None, '112', False),
+    ('9', '9', '', True),                      # numeral alone still qualifies
+])
+def test_only_a_number_makes_a_foot_band_line_a_candidate(
+        tool, raw, numeral, folio, expected):
+    assert tool.EpubGenerator._foot_band_candidate(raw, numeral, folio) \
+        is expected
+
+
 # --- applying the decision to a line ----------------------------------------
 
 def line(text, top=10, size=6):
@@ -166,10 +182,36 @@ def test_an_ornament_line_is_not_taken_with_the_folio(generator):
     assert not generator._is_furniture_line(0, line('***'), page_height=1000)
 
 
-def test_a_line_below_the_band_is_never_furniture(generator):
+def test_a_line_between_the_bands_is_never_furniture(generator):
+    """The middle of the page is the text block, whatever the key says."""
     occurrences = [folio(0, '9')]
     generator.furniture_drop = generator._decide_furniture(occurrences,
                                                            body_size=10)
 
-    assert not generator._is_furniture_line(0, line('9', top=900),
+    assert not generator._is_furniture_line(0, line('9', top=500),
                                             page_height=1000)
+
+
+def test_a_folio_at_the_foot_of_the_page_is_furniture_too(generator):
+    """Plates that print their number below the text were untouched."""
+    occurrences = [folio(0, '9')]
+    generator.furniture_drop = generator._decide_furniture(occurrences,
+                                                           body_size=10)
+
+    assert generator._is_furniture_line(0, line('9', top=950),
+                                        page_height=1000)
+
+
+@pytest.mark.parametrize('top,expected', [
+    (0, True), (120, True),      # head band of a 1000-high page
+    (121, False), (500, False),  # the text block
+    (879, False), (880, True), (999, True),   # foot band
+])
+def test_band_boundaries(generator, top, expected):
+    assert generator._in_furniture_band(top, 1000) is expected
+
+
+def test_the_band_does_not_need_a_page_height(generator):
+    """A page without usable dimensions cannot be banded, so everything is a
+    candidate and the recurrence rules decide on their own."""
+    assert generator._in_furniture_band(500, 0)

@@ -52,6 +52,13 @@ OCR_SYSTEM_UNKNOWN = 'Unknown'
 # pages (running heads, embedded folios) are dropped from the text, the
 # headings and the ToC. See _collect_running_heads for the rules.
 FURNITURE_TOP_BAND = 0.12
+# Books that print their number below the text rather than above it need the
+# same look at the foot of the page. Only folios are looked for there: what
+# repeats at the foot of a page in small type is a footnote, not a running
+# head, and a cookbook's "*If using self-rising flour..." note is on 60 pages
+# of one book. A foot-band line is a candidate only when it is the page's own
+# number, alone or embedded in a phrase.
+FURNITURE_BOTTOM_BAND = 0.12
 FURNITURE_MIN_PAGES = 2
 FURNITURE_RUN_GAP = 5
 FURNITURE_PREFIX_TOKENS = 2
@@ -985,12 +992,12 @@ class EpubGenerator(object):
         """True if this line was flagged as running-head furniture.
 
         Recomputes the same normalized key the detection pass used, so the
-        decision is deterministic; lines outside the top band are never
-        dropped.
+        decision is deterministic; lines outside the head and foot bands are
+        never dropped.
         """
         if not self.furniture_drop:
             return False
-        if page_height and line['bbox'][1] > FURNITURE_TOP_BAND * page_height:
+        if not self._in_furniture_band(line['bbox'][1], page_height):
             return False
         raw = ' '.join(w['text'] for w in line['words']).strip()
         if not raw:
@@ -1003,7 +1010,47 @@ class EpubGenerator(object):
             # empty key a folio-only line does, but it is not one, and the
             # folio rules must not take it down with the page's number.
             return False
+        if self._in_foot_band(line['bbox'][1], page_height) and \
+                not self._foot_band_candidate(raw, numeral, folio):
+            # Same rule as the detection pass, applied from the other end: a
+            # line of the text whose paragraph ran to the foot of the page must
+            # not be dropped just because it happens to match a running head.
+            return False
         return (page_idx, norm) in self.furniture_drop
+
+    def _in_furniture_band(self, top, page_height):
+        """True if a line's top edge sits in the head or the foot band.
+
+        Furniture is a matter of where a line is before it is a matter of what
+        it says: the printer put the running head and the folio outside the
+        text block. Without a page height there is no band, and everything is
+        considered; the recurrence rules still have to agree.
+        """
+        if not page_height:
+            return True
+        return (top <= FURNITURE_TOP_BAND * page_height
+                or top >= (1 - FURNITURE_BOTTOM_BAND) * page_height)
+
+    def _in_foot_band(self, top, page_height):
+        """True if a line's top edge sits in the foot band of the page."""
+        return bool(page_height) and \
+            top >= (1 - FURNITURE_BOTTOM_BAND) * page_height
+
+    @staticmethod
+    def _foot_band_candidate(raw, numeral, folio):
+        """Whether a foot-band line may be considered as furniture at all.
+
+        The head of a page holds the running title because that is where the
+        printer put it; the foot holds the last line of whatever paragraph ran
+        out, plus fine print that repeats across the book -- a recipe's "*If
+        using self-rising flour, omit the salt" sat at the foot of sixty pages
+        of one cookbook and was a "family" of its own. So a foot-band line is
+        only a candidate when it carries the page's own number, alone or inside
+        a phrase, which no sentence of the text does.
+        """
+        if numeral is not None:
+            return True
+        return hocr.structure.carries_folio(raw, folio)
 
     def _collect_running_heads(self, body_size):
         """Cross-page pass: find lines that repeat at the top of many pages.
@@ -1015,8 +1062,8 @@ class EpubGenerator(object):
         Love sets both at the same size — so this pass uses position and
         recurrence:
 
-        * a line in the top band of the page whose normalized text recurs
-          on enough pages joins a "furniture family" (a pair of lines only
+        * a line in the head or foot band of the page whose normalized text
+          recurs on enough pages joins a "furniture family" (a pair of lines only
           counts when they read like heads, i.e. are mostly caps, so
           recurring body text is safe);
         * occurrences whose text extends a family phrase by a couple of
@@ -1049,7 +1096,6 @@ class EpubGenerator(object):
                 continue
             if not height:
                 continue
-            limit = FURNITURE_TOP_BAND * height
             page_lines = []
             for element in hocr.parse.hocr_page_to_word_data(page):
                 for line in element['lines']:
@@ -1059,13 +1105,20 @@ class EpubGenerator(object):
                     if not raw:
                         continue
                     page_lines.append(raw)
-                    if line['bbox'][1] > limit:
+                    top = line['bbox'][1]
+                    if not self._in_furniture_band(top, height):
                         continue
                     fontsize = max((w['fontsize'] or 0)
                                    for w in line['words'])
                     folio = self.page_numbers.get(page_idx, '')
                     numeral, rest = hocr.structure.split_folio_token(
                         raw, folio)
+                    if height and self._in_foot_band(top, height) and \
+                            not self._foot_band_candidate(raw, numeral, folio):
+                        # In the foot band, only the page's own number counts;
+                        # anything else that repeats there is fine print that
+                        # belongs to the text.
+                        continue
                     norm = hocr.structure.normalize_head_text(rest)
                     if not norm and numeral is None:
                         # Nothing left after stripping: an ornament line
@@ -1083,7 +1136,7 @@ class EpubGenerator(object):
 
     def _decide_furniture(self, occurrences, body_size,
                           list_pages=frozenset()):
-        """Apply the furniture rules to collected top-band occurrences.
+        """Apply the furniture rules to collected head- and foot-band lines.
 
         See :meth:`_collect_running_heads`. `list_pages` holds the pages whose
         shape is a contents or index, where lone numbers are content. Returns
