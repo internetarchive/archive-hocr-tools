@@ -1,5 +1,6 @@
 import gzip
 import re
+import math
 
 from .util import open_if_required, iterparse_tags, HOCR_SCHEMA
 
@@ -138,15 +139,18 @@ def hocr_page_to_word_data(hocr_page, scaler=1):
         for line in list(par):
             line_data = {}
 
-            linebox = BBOX_REGEX.search(line.attrib['title']).group(1).split()
-            baseline = BASELINE_REGEX.search(line.attrib['title'])
+            linebox = BBOX_REGEX.search(line.attrib.get('title', ''))
+            if linebox is not None:
+                linebox = linebox.group(1).split()
+                linebox = [float(i) for i in linebox]
+            else:
+                linebox = [0.0, 0.0, 0.0, 0.0]
+            baseline = BASELINE_REGEX.search(line.attrib.get('title', ''))
             if baseline is not None:
                 baseline = baseline.group(1).split()
+                baseline = [float(i) for i in baseline]
             else:
-                baseline = [0, 0]
-
-            linebox = [float(i) for i in linebox]
-            baseline = [float(i) for i in baseline]
+                baseline = [0.0, 0.0]
 
             line_data['bbox'] = linebox
             line_data['baseline'] = baseline
@@ -202,6 +206,17 @@ def hocr_page_to_word_data(hocr_page, scaler=1):
                     x_fsize, 'writing_direction': writing_direction,
                     'confidence': conf})
 
+            if linebox == [0.0, 0.0, 0.0, 0.0]:
+                # get missing linebox from wordboxes
+                X1 = Y1 = +math.inf
+                X2 = Y2 = -math.inf
+                for word in word_data:
+                    x1, y1, x2, y2 = word["bbox"]
+                    if x1 < X1: X1 = x1
+                    if y1 < Y1: Y1 = y1
+                    if x2 > X2: X2 = x2
+                    if y2 > Y2: Y2 = y2
+                line_data['bbox'] = linebox = [X1, Y1, X2, Y2]
 
             line_data['words'] = word_data
             #print('Line words:', word_data)
